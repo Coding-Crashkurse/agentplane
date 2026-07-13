@@ -1,0 +1,30 @@
+# MCP expose without tool_name and a credential literal in a node config.
+expected_codes: [E050, E023]
+definition:
+  schema_version: 1
+  name: broken-mcp
+  expose:
+    kind: mcp
+  nodes:
+    - id: start_1
+      type: start
+      version: 1
+      config:
+        input_schema:
+          type: object
+          properties:
+            query: { type: string }
+          required: [query]
+    - id: call_1
+      type: llm_call
+      version: 1
+      config:
+        resource: default-llm
+        prompt: "answer {query} with password=supersecret123"
+    - id: end_1
+      type: end
+      version: 1
+      config: { output_from: call_1.text }
+  edges:
+    - { from: start_1.query, to: call_1.query }
+    - { from: call_1.text, to: end_1.input }

@@ -1,0 +1,41 @@
+# Minimal A2A-exposed flow: one LLM call answering the incoming message.
+schema_version: 1
+name: echo-agent
+display_name: "Echo Agent"
+description: "Answers any message with a single LLM completion"
+tags: [demo, echo]
+expose:
+  kind: a2a
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          message:
+            type: string
+        required: [message]
+  - id: call_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      model: ""
+      prompt: "{message}"
+      system_prompt: "You are a helpful echo agent. Answer briefly."
+      stream: true
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: call_1.text
+edges:
+  - { from: start_1.message, to: call_1.message }
+  - { from: call_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 80, y: 200 }
+    call_1: { x: 320, y: 200 }
+    end_1: { x: 560, y: 200 }

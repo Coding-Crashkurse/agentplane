@@ -1,0 +1,653 @@
+{
+  "$defs": {
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "EndNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/EndNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "end",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "EndNode",
+      "type": "object"
+    },
+    "EndNodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "output_from": {
+          "default": "",
+          "description": "Reference 'node_id.port' the flow output is read from. Empty means: take the value wired into the `input` port \u2014 required for branched flows where different runs feed `end` from different nodes.",
+          "title": "Output From",
+          "type": "string"
+        }
+      },
+      "title": "EndNodeConfig",
+      "type": "object"
+    },
+    "ExposeConfig": {
+      "additionalProperties": false,
+      "description": "How the runtime serves a flow: as an A2A agent or as an MCP server.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "a2a",
+            "mcp"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_description": {
+          "default": "",
+          "title": "Tool Description",
+          "type": "string"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ExposeConfig",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Layout": {
+      "additionalProperties": true,
+      "description": "Canvas layout block \u2014 builder-owned, ignored by the runtime.",
+      "properties": {
+        "nodes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LayoutPosition"
+          },
+          "title": "Nodes",
+          "type": "object"
+        }
+      },
+      "title": "Layout",
+      "type": "object"
+    },
+    "LayoutPosition": {
+      "additionalProperties": true,
+      "description": "Canvas position \u2014 builder-owned, ignored by the runtime.",
+      "properties": {
+        "x": {
+          "default": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "default": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "title": "LayoutPosition",
+      "type": "object"
+    },
+    "LlmCallNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/LlmCallNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "llm_call",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "LlmCallNode",
+      "type": "object"
+    },
+    "LlmCallNodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "resource": {
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "stream": {
+          "default": false,
+          "title": "Stream",
+          "type": "boolean"
+        },
+        "structured_output": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structured Output"
+        },
+        "system_prompt": {
+          "default": "",
+          "title": "System Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource",
+        "prompt"
+      ],
+      "title": "LlmCallNodeConfig",
+      "type": "object"
+    },
+    "McpToolNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/McpToolNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "mcp_tool",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "McpToolNode",
+      "type": "object"
+    },
+    "McpToolNodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "input port name -> tool argument name",
+          "title": "Args",
+          "type": "object"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "tool"
+      ],
+      "title": "McpToolNodeConfig",
+      "type": "object"
+    },
+    "RetrievalNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/RetrievalNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "retrieval",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "RetrievalNode",
+      "type": "object"
+    },
+    "RetrievalNodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "collection": {
+          "title": "Collection",
+          "type": "string"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filter"
+        },
+        "resource": {
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "top_k": {
+          "default": 4,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Top K",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "resource",
+        "collection"
+      ],
+      "title": "RetrievalNodeConfig",
+      "type": "object"
+    },
+    "RouterNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/RouterNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "router",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "RouterNode",
+      "type": "object"
+    },
+    "RouterNodeConfig": {
+      "additionalProperties": false,
+      "description": "Conditional branching (v1.1): routes the input value to one branch.\n\nEvery rule branch plus the default branch becomes a typed output port\nthat passes the input value through; only the chosen branch's downstream\nnodes execute.",
+      "properties": {
+        "default_branch": {
+          "default": "otherwise",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Default Branch",
+          "type": "string"
+        },
+        "input_type": {
+          "default": "text",
+          "enum": [
+            "text",
+            "json",
+            "documents"
+          ],
+          "title": "Input Type",
+          "type": "string"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/RouterRule"
+          },
+          "minItems": 1,
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rules"
+      ],
+      "title": "RouterNodeConfig",
+      "type": "object"
+    },
+    "RouterRule": {
+      "additionalProperties": false,
+      "description": "One branch condition, evaluated in order; first match wins.",
+      "properties": {
+        "branch": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Branch",
+          "type": "string"
+        },
+        "when": {
+          "enum": [
+            "not_empty",
+            "empty"
+          ],
+          "title": "When",
+          "type": "string"
+        }
+      },
+      "required": [
+        "when",
+        "branch"
+      ],
+      "title": "RouterRule",
+      "type": "object"
+    },
+    "StartNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/StartNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "start",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "StartNode",
+      "type": "object"
+    },
+    "StartNodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "input_schema": {
+          "additionalProperties": true,
+          "title": "Input Schema",
+          "type": "object"
+        }
+      },
+      "required": [
+        "input_schema"
+      ],
+      "title": "StartNodeConfig",
+      "type": "object"
+    },
+    "TemplateNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/TemplateNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "template",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "TemplateNode",
+      "type": "object"
+    },
+    "TemplateNodeConfig": {
+      "additionalProperties": false,
+      "description": "Static/interpolated text (v1.1): `{vars}` become input ports.\n\nThe `trigger` input port exists on every template so a router branch can\nactivate it even when the text needs no variables (fallback messages).",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TemplateNodeConfig",
+      "type": "object"
+    }
+  },
+  "$id": "https://agentplane.dev/schemas/flow-definition.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Versioned, serializable description of a flow (SPEC \u00a73.1).\n\nSerialization is deterministic: nodes are sorted by id, edges by\n(from, to), keys stay in model order \u2014 ``parse(serialize(d)) == d``.",
+  "properties": {
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "display_name": {
+      "default": "",
+      "title": "Display Name",
+      "type": "string"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "expose": {
+      "$ref": "#/$defs/ExposeConfig"
+    },
+    "layout": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Layout"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "name": {
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "nodes": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "end": "#/$defs/EndNode",
+            "llm_call": "#/$defs/LlmCallNode",
+            "mcp_tool": "#/$defs/McpToolNode",
+            "retrieval": "#/$defs/RetrievalNode",
+            "router": "#/$defs/RouterNode",
+            "start": "#/$defs/StartNode",
+            "template": "#/$defs/TemplateNode"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/StartNode"
+          },
+          {
+            "$ref": "#/$defs/EndNode"
+          },
+          {
+            "$ref": "#/$defs/LlmCallNode"
+          },
+          {
+            "$ref": "#/$defs/McpToolNode"
+          },
+          {
+            "$ref": "#/$defs/RetrievalNode"
+          },
+          {
+            "$ref": "#/$defs/RouterNode"
+          },
+          {
+            "$ref": "#/$defs/TemplateNode"
+          }
+        ]
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "name",
+    "expose",
+    "nodes"
+  ],
+  "title": "FlowDefinition",
+  "type": "object"
+}

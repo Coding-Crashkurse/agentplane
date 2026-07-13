@@ -1,0 +1,127 @@
+[project]
+name = "agentplane"
+version = "0.0.1"
+description = "agentplane monorepo workspace root (not published)"
+requires-python = ">=3.12"
+dependencies = [
+    "agentplane-core",
+    "agentplane-sdk",
+    # [semantic] in the dev workspace so the semantic tests run; the published
+    # package keeps it optional and degrades without it.
+    "agentplane-registry[semantic]",
+    "agentplane-runtime",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+agentplane-core = { workspace = true }
+agentplane-sdk = { workspace = true }
+agentplane-registry = { workspace = true }
+agentplane-runtime = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.22",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
+    "uvicorn>=0.30",
+    "types-protobuf>=7.34.1.20260518",
+    "asgi-lifespan>=2.1.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = [
+    "packages/core/src",
+    "packages/sdk/src",
+    "packages/registry/src",
+    "packages/runtime/src",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PL"]
+ignore = [
+    # PLR0913: API surface functions (FastAPI endpoints, clients) legitimately
+    # take many keyword parameters.
+    "PLR0913",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use magic values and long parametrized bodies by nature.
+"**/tests/**" = ["PLR2004", "PLR0915"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+files = ["packages"]
+mypy_path = [
+    "packages/core/src",
+    "packages/sdk/src",
+    "packages/registry/src",
+    "packages/runtime/src",
+]
+explicit_package_bases = true
+namespace_packages = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["langgraph.*", "fastmcp.*", "mcp.*"]
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+# optional [postgres] extra — not installed in the default dev environment
+module = ["pgvector.*", "asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: needs docker compose services (excluded from default run)",
+]
+addopts = "-m 'not integration' --import-mode=importlib"
+
+[tool.importlinter]
+root_packages = [
+    "agentplane_core",
+    "agentplane_sdk",
+    "agentplane_registry",
+    "agentplane_runtime",
+]
+
+[[tool.importlinter.contracts]]
+name = "core imports no agentplane package"
+type = "forbidden"
+source_modules = ["agentplane_core"]
+forbidden_modules = ["agentplane_sdk", "agentplane_registry", "agentplane_runtime"]
+
+[[tool.importlinter.contracts]]
+name = "sdk depends on core only"
+type = "forbidden"
+source_modules = ["agentplane_sdk"]
+forbidden_modules = ["agentplane_registry", "agentplane_runtime"]
+
+[[tool.importlinter.contracts]]
+name = "registry must not know sdk or runtime"
+type = "forbidden"
+source_modules = ["agentplane_registry"]
+forbidden_modules = ["agentplane_sdk", "agentplane_runtime"]
+
+[[tool.importlinter.contracts]]
+name = "runtime must not import registry"
+type = "forbidden"
+source_modules = ["agentplane_runtime"]
+forbidden_modules = ["agentplane_registry"]

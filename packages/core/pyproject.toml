@@ -1,0 +1,19 @@
+[project]
+name = "agentplane-core"
+version = "0.0.1"
+description = "agentplane shared contract: Definition schema, registry models, interfaces"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    # core depends on pydantic and a2a-sdk — nothing else (CLAUDE.md dependency policy)
+    "pydantic>=2.7,<3",
+    "a2a-sdk>=1.1,<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentplane_core"]

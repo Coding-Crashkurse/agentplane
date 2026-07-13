@@ -1,0 +1,9 @@
+# Future major schema version must be rejected.
+expected_codes: [E001]
+definition:
+  schema_version: 2
+  name: future-flow
+  expose:
+    kind: a2a
+  nodes: []
+  edges: []

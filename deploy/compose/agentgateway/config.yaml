@@ -1,0 +1,72 @@
+# agentgateway config (SPEC §7.3): one OpenAI-compatible LLM route, one MCP
+# route, static wildcard routes /a2a/* and /mcp/* -> runtime with the a2a
+# policy (agent-card URL rewriting) and JWT validation against Keycloak.
+#
+# Schema reference: https://agentgateway.dev/docs/ — adjust to the exact
+# version you pin; the shape below targets the 0.x config format.
+binds:
+  - port: 3000
+    listeners:
+      - routes:
+          # A2A agents served by the runtime (wildcard, card rewriting).
+          - name: a2a
+            matches:
+              - path:
+                  pathPrefix: /a2a/
+            policies:
+              a2a: {}
+              jwtAuth:
+                issuer: http://keycloak:8080/realms/agentplane
+                audiences: [agentplane]
+                jwks:
+                  url: http://keycloak:8080/realms/agentplane/protocol/openid-connect/certs
+            backends:
+              - host: runtime:8000
+
+          # MCP servers served by the runtime (streamable HTTP passthrough).
+          - name: mcp
+            matches:
+              - path:
+                  pathPrefix: /mcp/
+            policies:
+              jwtAuth:
+                issuer: http://keycloak:8080/realms/agentplane
+                audiences: [agentplane]
+                jwks:
+                  url: http://keycloak:8080/realms/agentplane/protocol/openid-connect/certs
+            backends:
+              - host: runtime:8000
+
+          # Runtime + registry management APIs.
+          - name: runtime-api
+            matches:
+              - path:
+                  pathPrefix: /runtime/
+            policies:
+              urlRewrite:
+                path:
+                  prefix: /
+            backends:
+              - host: runtime:8000
+          - name: registry-api
+            matches:
+              - path:
+                  pathPrefix: /registry/
+            policies:
+              urlRewrite:
+                path:
+                  prefix: /
+            backends:
+              - host: registry:8100
+
+          # OpenAI-compatible LLM route: the platform's single LLM egress.
+          - name: llm
+            matches:
+              - path:
+                  pathPrefix: /v1/
+            backends:
+              - ai:
+                  name: openai
+                  provider:
+                    openAI:
+                      model: gpt-5-mini

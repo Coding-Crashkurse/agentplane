@@ -1,0 +1,66 @@
+name: Release
+
+# Publishes the packages to PyPI. The version that gets published is exactly
+# the `version` in each package's pyproject.toml — bump it there, then run
+# this workflow (manually via "Run workflow" or by pushing a v* tag).
+#
+# Versions that already exist on PyPI are skipped (skip-existing), so
+# packages can be bumped and released independently of each other.
+#
+# Auth is PyPI Trusted Publishing (OIDC) — no token secret needed. PyPI
+# requires *pending* publishers to be unique per configuration, so each
+# package publishes from its own GitHub environment (pypi-core, pypi-sdk,
+# pypi-registry, pypi-runtime), all pointing at this workflow file.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Run gates before publishing
+        run: |
+          uv sync --frozen
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run mypy
+          uv run lint-imports
+          uv run pytest -q
+
+  publish:
+    needs: gates
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [core, sdk, registry, runtime]
+    environment: pypi-${{ matrix.package }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build agentplane-${{ matrix.package }}
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('packages/${{ matrix.package }}/pyproject.toml','rb'))['project']['version'])")
+          echo "publishing agentplane-${{ matrix.package }} $VERSION (from pyproject.toml)"
+          uv build packages/${{ matrix.package }}
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

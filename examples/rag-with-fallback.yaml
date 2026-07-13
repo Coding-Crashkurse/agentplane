@@ -1,0 +1,73 @@
+# RAG with an empty-result fallback (v1.1): the router passes retrieved
+# documents to the LLM branch, or activates a static template when the
+# knowledge base returned nothing. `end.output_from` stays empty — the value
+# arrives over whichever wire fired.
+schema_version: 1
+name: rag-with-fallback
+display_name: "RAG with Fallback"
+description: "Answers from the KB; returns a standard message when nothing was found"
+tags: [rag, fallback]
+expose:
+  kind: a2a
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          query:
+            type: string
+        required: [query]
+  - id: retrieve_1
+    type: retrieval
+    version: 1
+    config:
+      resource: kb-support
+      collection: support_docs
+      top_k: 4
+  - id: check_1
+    type: router
+    version: 1
+    config:
+      input_type: documents
+      rules:
+        - when: not_empty
+          branch: found
+      default_branch: missing
+  - id: call_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      model: ""
+      prompt: "Answer using: {documents}\n\nQuestion: {query}"
+      system_prompt: "Answer only from the provided documents."
+      stream: true
+  - id: fallback_1
+    type: template
+    version: 1
+    config:
+      text: "I have no information about that in the knowledge base."
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: ""
+edges:
+  - { from: start_1.query, to: retrieve_1.query }
+  - { from: start_1.query, to: call_1.query }
+  - { from: retrieve_1.documents, to: check_1.input }
+  - { from: check_1.found, to: call_1.documents }
+  - { from: check_1.missing, to: fallback_1.trigger }
+  - { from: call_1.text, to: end_1.input }
+  - { from: fallback_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 60, y: 300 }
+    retrieve_1: { x: 300, y: 180 }
+    check_1: { x: 540, y: 180 }
+    call_1: { x: 800, y: 300 }
+    fallback_1: { x: 800, y: 80 }
+    end_1: { x: 1060, y: 200 }

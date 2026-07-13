@@ -1,0 +1,9 @@
+# Existing vector DB, consumed read-only.
+kind: qdrant
+name: kb-support
+display_name: "Support KB (Qdrant)"
+url: "http://qdrant:6333"
+embedding:
+  resource: default-llm
+  model: text-embedding-3-small
+  dimension: 1536

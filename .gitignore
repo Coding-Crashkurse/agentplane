@@ -1,0 +1,34 @@
+# internal working documents — not part of the public repo
+CLAUDE.md
+SPEC.md
+.claude/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# local databases and state
+*.db
+registry.db
+runtime.db
+
+# environments / secrets
+.env
+.env.*
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

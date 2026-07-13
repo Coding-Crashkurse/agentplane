@@ -1,0 +1,42 @@
+# Flow that calls one tool on an external MCP server and answers via LLM.
+schema_version: 1
+name: web-summarizer
+display_name: "Web Summarizer"
+description: "Fetches a page via an MCP tool and summarizes it"
+tags: [demo, mcp]
+expose:
+  kind: a2a
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          url:
+            type: string
+        required: [url]
+  - id: fetch_1
+    type: mcp_tool
+    version: 1
+    config:
+      resource: web-tools
+      tool: fetch_page
+      args:
+        url: url
+  - id: call_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      prompt: "Summarize this page content in three sentences:\n\n{page}"
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: call_1.text
+edges:
+  - { from: start_1.url, to: fetch_1.url }
+  - { from: fetch_1.result, to: call_1.page }
+  - { from: call_1.text, to: end_1.input }

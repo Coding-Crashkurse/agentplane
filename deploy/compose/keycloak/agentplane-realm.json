@@ -1,0 +1,68 @@
+{
+  "realm": "agentplane",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "agentplane platform admin" },
+      { "name": "user", "description": "agentplane platform user" }
+    ]
+  },
+  "users": [
+    {
+      "username": "demo-admin",
+      "enabled": true,
+      "email": "demo-admin@example.com",
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "admin", "temporary": false }],
+      "realmRoles": ["admin", "user"]
+    },
+    {
+      "username": "demo-user",
+      "enabled": true,
+      "email": "demo-user@example.com",
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "credentials": [{ "type": "password", "value": "user", "temporary": false }],
+      "realmRoles": ["user"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "agentplane-cli",
+      "name": "agentplane CLI / smoke tests",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "agentplane-cli-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "defaultClientScopes": ["basic", "roles", "profile", "email"],
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "agentplane",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "agentplane",
+      "name": "agentplane audience",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false
+    }
+  ],
+  "defaultRoles": ["user"]
+}

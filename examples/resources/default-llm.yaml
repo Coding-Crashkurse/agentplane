@@ -1,0 +1,7 @@
+# ModelProvider resource pointing at the gateway's OpenAI-compatible endpoint.
+kind: model_provider
+name: default-llm
+display_name: "Default LLM (via gateway)"
+base_url: ""            # empty -> the gateway's OpenAI-compatible endpoint
+api_key_secret: ""      # write-only; empty when the gateway injects credentials
+default_model: gpt-5-mini

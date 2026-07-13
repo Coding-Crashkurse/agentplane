@@ -1,0 +1,54 @@
+# RAG as a retrieval flow exposed as an MCP tool (SPEC §3.1 example).
+schema_version: 1
+name: support-rag
+display_name: "Support RAG"
+description: "Answers support questions from the KB"
+tags: [support, rag]
+expose:
+  kind: mcp
+  tool_name: search_support_kb
+  tool_description: "Search the support knowledge base"
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          query:
+            type: string
+        required: [query]
+  - id: retrieve_1
+    type: retrieval
+    version: 1
+    config:
+      resource: kb-support
+      collection: support_docs
+      top_k: 4
+  - id: call_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      model: gpt-5-mini
+      prompt: "Answer using: {documents}\n\nQuestion: {query}"
+      system_prompt: ""
+      structured_output: null
+      stream: true
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: call_1.text
+edges:
+  - { from: start_1.query, to: retrieve_1.query }
+  - { from: start_1.query, to: call_1.query }
+  - { from: retrieve_1.documents, to: call_1.documents }
+  - { from: call_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 80, y: 300 }
+    retrieve_1: { x: 320, y: 200 }
+    call_1: { x: 560, y: 300 }
+    end_1: { x: 800, y: 300 }

@@ -1,0 +1,38 @@
+# Cycle plus a dangling edge.
+expected_codes: [E031, E032]
+definition:
+  schema_version: 1
+  name: broken-graph
+  expose:
+    kind: a2a
+  nodes:
+    - id: start_1
+      type: start
+      version: 1
+      config:
+        input_schema:
+          type: object
+          properties:
+            query: { type: string }
+          required: [query]
+    - id: call_1
+      type: llm_call
+      version: 1
+      config:
+        resource: default-llm
+        prompt: "{query} {extra}"
+    - id: call_2
+      type: llm_call
+      version: 1
+      config:
+        resource: default-llm
+        prompt: "{previous}"
+    - id: end_1
+      type: end
+      version: 1
+      config: { output_from: call_1.text }
+  edges:
+    - { from: start_1.query, to: call_1.query }
+    - { from: call_1.text, to: call_2.previous }
+    - { from: call_2.text, to: call_1.extra }
+    - { from: ghost_1.text, to: end_1.input }
