@@ -183,3 +183,36 @@ def test_agent_card_fields_derive_from_definition() -> None:
     assert card.name == "support-rag"
     assert card.skills[0].tags == ["support", "rag"]
     assert card.supported_interfaces[0].protocol_version == "1.0"
+
+
+def test_agent_card_carries_expose_examples() -> None:
+    """expose.examples land on the skill so calling agents can route (FEEDBACK 2.2)."""
+    defn = load_example("echo-agent.yaml")
+    card = build_agent_card(defn, "https://api.example/a2a/echo-agent")
+    assert list(card.skills[0].examples) == [
+        "What is the capital of France?",
+        "Summarise this paragraph in one sentence.",
+    ]
+
+
+def test_agent_card_version_defaults_to_the_deploy_counter() -> None:
+    defn = load_example("echo-agent.yaml")
+    assert build_agent_card(defn, "https://api.example/a2a/echo-agent").version == "1"
+    labelled = build_agent_card(defn, "https://api.example/a2a/echo-agent", "2.1.0")
+    assert labelled.version == "2.1.0"
+
+
+async def test_browser_get_on_the_endpoint_explains_itself(manager: EndpointManager) -> None:
+    """The JSON-RPC binding is POST-only; a plain GET used to be a bare 405 (FEEDBACK 2.4)."""
+    defn = load_example("echo-agent.yaml")
+    await manager.start(defn, 1)
+    transport = httpx.ASGITransport(app=manager.a2a)
+    async with httpx.AsyncClient(transport=transport, base_url="http://rt.test") as client:
+        response = await client.get("/echo-agent/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["protocol"] == "A2A"
+    assert body["agent_card_url"] == (
+        "https://api.example/a2a/echo-agent/.well-known/agent-card.json"
+    )
+    assert "A2A-Version: 1.0" in body["hint"]

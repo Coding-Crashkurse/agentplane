@@ -6,6 +6,9 @@ description: "Answers any message with a single LLM completion"
 tags: [demo, echo]
 expose:
   kind: a2a
+  examples:
+    - "What is the capital of France?"
+    - "Summarise this paragraph in one sentence."
 nodes:
   - id: start_1
     type: start

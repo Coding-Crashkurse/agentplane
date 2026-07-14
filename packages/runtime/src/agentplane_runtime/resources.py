@@ -1,4 +1,9 @@
-"""Resource service (SPEC §6.3): CRUD, write-only secrets, E022 dimension check."""
+"""Resource service (SPEC §6.3): CRUD, write-only secrets, E022 dimension check.
+
+Create/update stay offline: a resource carries no collection, so there is
+nothing to compare a dimension against until a retrieval node names one. The
+E022 check therefore runs in definition validation (see ``validation.py``).
+"""
 
 from __future__ import annotations
 
@@ -74,9 +79,15 @@ class ResourceService:
         return await self._secrets.get(secret_ref(resource_name, field))
 
     async def check_collection_dimension(
-        self, resource: VectorDBResource, collection: str
+        self, resource: VectorDBResource, collection: str, path: str
     ) -> ValidationIssue | None:
-        """E022 for a concrete collection (used by definition validation and create)."""
+        """E022 for a concrete collection (SPEC §3.7).
+
+        The collection lives on the retrieval *node*, not on the resource, so
+        this check only has something to compare during definition validation —
+        which is why ``path`` points at the offending node. An unreachable vector
+        DB is not an E022: it surfaces at execution time, not as a schema error.
+        """
         api_key, dsn = "", ""
         try:
             if resource.api_key_secret:
@@ -94,10 +105,11 @@ class ResourceService:
             return ValidationIssue(
                 code="E022",
                 severity="error",
-                path=f"resources/{resource.name}/embedding/dimension",
+                path=path,
                 message=(
-                    f"embedding dimension {resource.embedding.dimension} does not match "
-                    f"collection {collection!r} dimension {actual}"
+                    f"resource {resource.name!r} embeds with dimension "
+                    f"{resource.embedding.dimension}, but collection {collection!r} has "
+                    f"dimension {actual}"
                 ),
             )
         return None

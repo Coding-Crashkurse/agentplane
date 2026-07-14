@@ -58,9 +58,10 @@ _stream_var: ContextVar[StreamCallback | None] = ContextVar("agentplane_stream",
 
 
 class FlowState(TypedDict):
-    """LangGraph state: values keyed by 'node_id.port'."""
+    """LangGraph state: values keyed by 'node_id.port', plus the nodes that ran."""
 
     values: Annotated[dict[str, PortValue], or_]
+    executed: Annotated[set[str], or_]
 
 
 class _NodeFn(Protocol):
@@ -171,6 +172,8 @@ class FlowRunner:
 
     def _executor_for(self, node: Node) -> _NodeFn:
         async def run_node(state: FlowState) -> dict[str, object]:
+            if node.id in state["executed"] or not self._ready(node, state["values"]):
+                return {}
             with tracer.start_as_current_span(
                 "agentplane.node",
                 attributes={
@@ -181,9 +184,25 @@ class FlowRunner:
                 },
             ):
                 outputs = await self._run(node, state["values"])
-            return {"values": outputs}
+            return {"values": outputs, "executed": {node.id}}
 
         return run_node
+
+    def _ready(self, node: Node, values: dict[str, PortValue]) -> bool:
+        """Whether every wired input port of ``node`` carries a value yet.
+
+        LangGraph (Pregel) triggers a node as soon as *any* predecessor wrote, so
+        a node fed from different graph depths would run once per predecessor —
+        the first time with inputs still missing, i.e. a wasted LLM call. Waiting
+        until all wired ports are filled turns such a fan-in into a join, and it
+        gates router branches for free: the port fed by a branch that was not
+        chosen never fills, so the node stays dormant. Every predecessor write
+        re-triggers the node, so a skipped run is retried once the value arrives.
+        """
+        return all(
+            any(source_ref in values for source_ref in source_refs)
+            for source_refs in self._inputs.get(node.id, {}).values()
+        )
 
     def _gather_inputs(self, node: Node, values: dict[str, PortValue]) -> dict[str, PortValue]:
         gathered: dict[str, PortValue] = {}
@@ -296,7 +315,13 @@ class FlowRunner:
         if resource.dsn_secret:
             dsn = await self._context.resources.secret_value(config.resource, "dsn_secret")
         reader = await reader_for(resource, api_key=api_key, dsn=dsn)
-        documents = await reader.search(config.collection, vector, config.top_k, config.filter)
+        documents = await reader.search(
+            config.collection,
+            vector,
+            config.top_k,
+            config.filter,
+            min_score=config.min_score,
+        )
         return {f"{node.id}.documents": documents}
 
     async def _run_mcp_tool(
@@ -346,7 +371,10 @@ class FlowRunner:
             },
         ):
             graph = self._graph
-            result = await graph.ainvoke({"values": seeded})  # type: ignore[attr-defined]
+            empty: set[str] = set()
+            result = await graph.ainvoke(  # type: ignore[attr-defined]
+                {"values": seeded, "executed": empty}
+            )
         values: dict[str, PortValue] = result["values"]
         return values.get(f"{end.id}.output")
 

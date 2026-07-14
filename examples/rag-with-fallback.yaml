@@ -2,6 +2,10 @@
 # documents to the LLM branch, or activates a static template when the
 # knowledge base returned nothing. `end.output_from` stays empty — the value
 # arrives over whichever wire fired.
+#
+# `min_score` is what makes the fallback reachable: without a threshold a
+# filled collection always returns top_k hits, however irrelevant, so the
+# `empty` branch would never fire.
 schema_version: 1
 name: rag-with-fallback
 display_name: "RAG with Fallback"
@@ -27,6 +31,7 @@ nodes:
       resource: kb-support
       collection: support_docs
       top_k: 4
+      min_score: 0.5
   - id: check_1
     type: router
     version: 1

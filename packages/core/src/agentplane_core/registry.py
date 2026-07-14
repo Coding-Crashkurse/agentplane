@@ -24,7 +24,7 @@ from pydantic import (
 
 from agentplane_core.card_json import agent_card_from_dict, agent_card_to_json_dict
 from agentplane_core.definition import FlowDefinition
-from agentplane_core.types import JsonObject, JsonSchema, Slug
+from agentplane_core.types import JsonObject, JsonSchema, Slug, VersionLabel
 
 EntryKind = Literal["agent", "mcp_server"]
 HealthStatus = Literal["starting", "healthy", "unhealthy", "unknown"]
@@ -219,6 +219,7 @@ class DefinitionInfo(BaseModel):
     status: DefinitionStatus
     latest_version: int | None = None
     deployed_version: int | None = None
+    deployed_version_label: VersionLabel | None = None
     endpoint_url: str | None = None
     owner: str = ""
     created_at: datetime
@@ -227,12 +228,18 @@ class DefinitionInfo(BaseModel):
 
 
 class DeploymentInfo(BaseModel):
-    """Result of a deploy (SPEC §6.1)."""
+    """Result of a deploy (SPEC §6.1).
+
+    ``version`` is the runtime's deploy counter and the version's identity
+    (rollback, endpoint state). ``version_label`` is the publisher's optional
+    semantic version for the same snapshot — it labels, it does not identify.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: Slug
     version: int
+    version_label: VersionLabel | None = None
     endpoint_url: str
     registry_id: UUID | None = None
 

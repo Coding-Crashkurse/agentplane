@@ -67,6 +67,14 @@
       "additionalProperties": false,
       "description": "How the runtime serves a flow: as an A2A agent or as an MCP server.",
       "properties": {
+        "examples": {
+          "description": "Example prompts for this flow. Served as `skill.examples` on the A2A agent card so calling agents can route to it.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Examples",
+          "type": "array"
+        },
         "kind": {
           "enum": [
             "a2a",
@@ -343,6 +351,19 @@
           ],
           "default": null,
           "title": "Filter"
+        },
+        "min_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Similarity score threshold. Hits below it are dropped, so a filled collection can still yield zero documents \u2014 which is what makes an empty-result router branch fire. Score semantics follow the collection's distance metric (cosine: 1.0 = identical).",
+          "title": "Min Score"
         },
         "resource": {
           "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",

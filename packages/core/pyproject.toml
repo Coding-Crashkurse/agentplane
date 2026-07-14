@@ -1,6 +1,6 @@
 [project]
 name = "agentplane-core"
-version = "0.0.1"
+version = "0.0.2"
 description = "agentplane shared contract: Definition schema, registry models, interfaces"
 readme = "README.md"
 license = "MIT"

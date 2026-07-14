@@ -15,6 +15,7 @@ from agentplane_core import (
     JsonObject,
     Resource,
     ValidationResult,
+    VersionLabel,
 )
 from agentplane_runtime.auth import Principal
 from agentplane_runtime.definitions import (
@@ -100,14 +101,19 @@ async def deploy_definition(
     state: State,
     caller: Caller,
     version: Annotated[int | None, Query(ge=1)] = None,
+    version_label: Annotated[VersionLabel | None, Query()] = None,
     ephemeral: Annotated[bool, Query()] = False,
 ) -> DeploymentInfo | JSONResponse:
     try:
-        return await state.definitions.deploy(name, version=version, ephemeral=ephemeral)
+        return await state.definitions.deploy(
+            name, version=version, version_label=version_label, ephemeral=ephemeral
+        )
     except DefinitionInvalidError as exc:
         return _validation_response(exc.result)
     except DefinitionNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from None
+    except DefinitionConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from None
 
 
 @router.post("/definitions/{name}/undeploy", status_code=status.HTTP_204_NO_CONTENT)

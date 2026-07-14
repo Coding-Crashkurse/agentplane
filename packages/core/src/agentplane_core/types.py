@@ -21,12 +21,21 @@ NODE_ID_PATTERN = r"^[a-z][a-z0-9_]*$"
 TOOL_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 BRANCH_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 PORT_REF_PATTERN = r"^[a-z][a-z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$"
+# Semantic version chosen by the publisher at deploy time. It labels a
+# deployment; the integer deploy counter stays the version's identity.
+VERSION_LABEL_PATTERN = (
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 Slug = Annotated[str, Field(pattern=SLUG_PATTERN)]
 NodeId = Annotated[str, Field(pattern=NODE_ID_PATTERN)]
 ToolName = Annotated[str, Field(pattern=TOOL_NAME_PATTERN)]
 BranchName = Annotated[str, Field(pattern=BRANCH_NAME_PATTERN)]
 PortRef = Annotated[str, Field(pattern=PORT_REF_PATTERN, description="Reference 'node_id.port'")]
+VersionLabel = Annotated[
+    str, Field(pattern=VERSION_LABEL_PATTERN, description="Semantic version, e.g. '1.2.0'")
+]
 
 
 def split_port_ref(ref: str) -> tuple[str, str]:

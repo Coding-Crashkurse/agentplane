@@ -144,6 +144,10 @@ def validate(
 def deploy(
     file: Annotated[Path, typer.Argument(help="flow definition YAML")],
     draft: Annotated[bool, typer.Option("--draft", help="create/update the draft only")] = False,
+    version_label: Annotated[
+        str | None,
+        typer.Option("--version-label", help="semantic version for this deploy, e.g. 1.2.0"),
+    ] = None,
     runtime_url: RuntimeUrlOption = None,
     token: TokenOption = None,
 ) -> None:
@@ -164,8 +168,9 @@ def deploy(
                 await client.update_draft(defn.name, defn)
             if draft:
                 return f"draft saved: {defn.name}"
-            info = await client.deploy(defn.name)
-            return f"deployed {info.name} v{info.version} -> {info.endpoint_url}"
+            info = await client.deploy(defn.name, version_label=version_label)
+            label = f" ({info.version_label})" if info.version_label else ""
+            return f"deployed {info.name} v{info.version}{label} -> {info.endpoint_url}"
 
     typer.echo(_run(do_deploy()))
 

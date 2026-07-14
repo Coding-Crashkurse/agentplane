@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REGISTRY_VERSION = "0.0.1"
+REGISTRY_VERSION = "0.0.2"
 
 
 class RegistrySettings(BaseSettings):

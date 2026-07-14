@@ -50,10 +50,14 @@ class QdrantReader:
         vector: list[float],
         top_k: int,
         filter: JsonObject | None = None,
+        *,
+        min_score: float | None = None,
     ) -> list[Document]:
         body: dict[str, object] = {"vector": vector, "limit": top_k, "with_payload": True}
         if filter is not None:
             body["filter"] = filter
+        if min_score is not None:
+            body["score_threshold"] = min_score
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
@@ -109,6 +113,8 @@ class PgvectorReader:
         vector: list[float],
         top_k: int,
         filter: JsonObject | None = None,
+        *,
+        min_score: float | None = None,
     ) -> list[Document]:
         import asyncpg  # noqa: PLC0415 - optional [postgres] extra
 
@@ -129,10 +135,11 @@ class PgvectorReader:
             await conn.close()
         documents: list[Document] = []
         for row in rows:
+            score = float(row["score"])
+            if min_score is not None and score < min_score:
+                continue
             metadata = row["metadata"] if isinstance(row["metadata"], dict) else {}
-            documents.append(
-                Document(text=str(row["text"]), score=float(row["score"]), metadata=metadata)
-            )
+            documents.append(Document(text=str(row["text"]), score=score, metadata=metadata))
         return documents
 
 

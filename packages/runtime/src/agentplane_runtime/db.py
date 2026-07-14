@@ -45,11 +45,17 @@ class DefinitionRow(Base):
 
 class VersionRow(Base):
     __tablename__ = "definition_versions"
-    __table_args__ = (UniqueConstraint("name", "version", name="uq_versions_name_version"),)
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_versions_name_version"),
+        UniqueConstraint("name", "version_label", name="uq_versions_name_label"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64), index=True)
     version: Mapped[int] = mapped_column(Integer)
+    # Publisher-chosen semantic version for this snapshot; unique per definition.
+    # NULL for versions deployed without a label (SQL treats NULLs as distinct).
+    version_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     definition_json: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -114,6 +120,20 @@ async def latest_version(session: AsyncSession, name: str) -> int:
     return first or 0
 
 
+async def version_row(session: AsyncSession, name: str, version: int) -> VersionRow | None:
+    result = await session.execute(
+        select(VersionRow).where(VersionRow.name == name, VersionRow.version == version)
+    )
+    return result.scalar_one_or_none()
+
+
+async def version_row_by_label(session: AsyncSession, name: str, label: str) -> VersionRow | None:
+    result = await session.execute(
+        select(VersionRow).where(VersionRow.name == name, VersionRow.version_label == label)
+    )
+    return result.scalar_one_or_none()
+
+
 __all__ = [
     "RESOURCE_ADAPTER",
     "Base",
@@ -126,4 +146,6 @@ __all__ = [
     "latest_version",
     "load_definition",
     "load_resource",
+    "version_row",
+    "version_row_by_label",
 ]

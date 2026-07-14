@@ -34,7 +34,8 @@ from fastmcp import FastMCP
 from fastmcp.tools import Tool, ToolResult
 from pydantic import PrivateAttr
 from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
 from agentplane_core import (
@@ -47,6 +48,8 @@ from agentplane_runtime.engine import ExecutionContext, FlowRunner, _as_text
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.settings import EPHEMERAL_TTL_S, RuntimeSettings
 
+AGENT_CARD_PATH = "/.well-known/agent-card.json"
+
 # ASGI protocol types — inherently loose (the ASGI spec is dict-based).
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -54,20 +57,26 @@ Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
-def build_agent_card(defn: FlowDefinition, public_url: str) -> AgentCard:
-    """Derive the A2A card from the definition (SPEC §6.5)."""
+def build_agent_card(defn: FlowDefinition, public_url: str, version: str = "1") -> AgentCard:
+    """Derive the A2A card from the definition (SPEC §6.5).
+
+    ``version`` is the published version label when the publisher chose one,
+    else the deploy counter — the card always carries the version that is
+    actually being served.
+    """
     skills = [
         AgentSkill(
             id=defn.name,
             name=defn.display_name or defn.name,
             description=defn.description or defn.display_name or defn.name,
             tags=list(defn.tags) or ["flow"],
+            examples=list(defn.expose.examples),
         )
     ]
     return AgentCard(
         name=defn.name,
         description=defn.description,
-        version="1",
+        version=version,
         supported_interfaces=[
             AgentInterface(url=public_url, protocol_binding="JSONRPC", protocol_version="1.0")
         ],
@@ -151,15 +160,35 @@ def build_a2a_app(
     defn: FlowDefinition,
     public_url: str,
     runner_factory: Callable[[], FlowRunner],
+    version: str = "1",
 ) -> Starlette:
     """One Starlette app per A2A-exposed flow: card + JSON-RPC routes."""
-    card = build_agent_card(defn, public_url)
+    card = build_agent_card(defn, public_url, version)
     handler = DefaultRequestHandler(
         agent_executor=FlowAgentExecutor(runner_factory, defn),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
+
+    async def endpoint_info(_: Request) -> JSONResponse:
+        """A browser GET on the endpoint lands here — the JSON-RPC binding is POST-only."""
+        return JSONResponse(
+            {
+                "name": defn.name,
+                "description": defn.description,
+                "protocol": "A2A",
+                "protocol_version": "1.0",
+                "agent_card_url": f"{public_url}{AGENT_CARD_PATH}",
+                "jsonrpc_url": public_url,
+                "hint": (
+                    "POST JSON-RPC 2.0 requests here with the header 'A2A-Version: 1.0'; "
+                    "GET the agent card at agent_card_url."
+                ),
+            }
+        )
+
     routes: list[Route] = [
+        Route("/", endpoint_info, methods=["GET"]),
         *create_agent_card_routes(card),
         *create_jsonrpc_routes(handler, "/"),
     ]
@@ -274,6 +303,7 @@ class Endpoint:
     kind: str  # "a2a" | "mcp"
     version: int
     public_url: str
+    version_label: str | None = None
     lifespan: LifespanHost | None = None
     expires_at: float | None = None  # ephemeral only
 
@@ -319,7 +349,12 @@ class EndpointManager:
         return f"{base}/{defn.expose.kind}/{defn.name}"
 
     async def start(
-        self, defn: FlowDefinition, version: int, *, ephemeral: bool = False
+        self,
+        defn: FlowDefinition,
+        version: int,
+        *,
+        version_label: str | None = None,
+        ephemeral: bool = False,
     ) -> Endpoint:
         """(Re)start the endpoint for a definition at a given version."""
         key = f"_draft/{defn.name}" if ephemeral else defn.name
@@ -335,7 +370,7 @@ class EndpointManager:
             await lifespan.start()
             self.mcp.mount(key, http_app)
         else:
-            app = build_a2a_app(defn, public_url, runner_factory)
+            app = build_a2a_app(defn, public_url, runner_factory, version_label or str(version))
             self.a2a.mount(key, app)
 
         endpoint = Endpoint(
@@ -343,6 +378,7 @@ class EndpointManager:
             kind=defn.expose.kind if not ephemeral else "a2a",
             version=version,
             public_url=public_url,
+            version_label=version_label,
             lifespan=lifespan,
             expires_at=time.monotonic() + EPHEMERAL_TTL_S if ephemeral else None,
         )
@@ -373,6 +409,7 @@ class EndpointManager:
 
 
 __all__ = [
+    "AGENT_CARD_PATH",
     "EndpointManager",
     "FlowAgentExecutor",
     "PathDispatcher",

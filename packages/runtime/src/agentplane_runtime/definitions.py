@@ -20,6 +20,8 @@ from agentplane_runtime.db import (
     dump_definition,
     latest_version,
     load_definition,
+    version_row,
+    version_row_by_label,
 )
 from agentplane_runtime.registration import RegistryRegistrar
 from agentplane_runtime.resources import ResourceService
@@ -108,31 +110,42 @@ class DefinitionService:
         return await self.info(name)
 
     async def deploy(
-        self, name: str, *, version: int | None = None, ephemeral: bool = False
+        self,
+        name: str,
+        *,
+        version: int | None = None,
+        version_label: str | None = None,
+        ephemeral: bool = False,
     ) -> DeploymentInfo:
+        """Freeze the draft as a new version and serve it — or re-serve an existing one.
+
+        A new deploy may carry a ``version_label`` (semantic version chosen by
+        the publisher, unique per definition). Rollback selects an existing
+        version by ``version`` (the deploy counter) or by ``version_label``;
+        passing both, or a label that is already taken by another version, is a
+        conflict.
+        """
         row = await self._row(name)
         if ephemeral:
             return await self._deploy_ephemeral(row)
+        if version is not None and version_label is not None:
+            raise DefinitionConflictError(
+                "pass either 'version' (rollback by counter) or 'version_label', not both"
+            )
+
+        if version is None and version_label is not None:
+            existing = await self._version_by_label(name, version_label)
+            if existing is not None:
+                version = existing  # rollback: the label already identifies a version
+                version_label = None
 
         if version is None:
-            draft = load_definition(row.draft_json)
-            result = await self.validate(draft)
-            if not result.valid:
-                raise DefinitionInvalidError(result)
-            async with self._db.session() as session, session.begin():
-                new_version = await latest_version(session, name) + 1
-                session.add(
-                    VersionRow(
-                        name=name,
-                        version=new_version,
-                        definition_json=dump_definition(draft),
-                    )
-                )
-            defn, active_version = draft, new_version
+            defn, active_version, active_label = await self._freeze_draft(name, version_label)
         else:
-            defn, active_version = await self._load_version(name, version), version
+            defn, active_label = await self._load_version_row(name, version)
+            active_version = version
 
-        endpoint = await self._endpoints.start(defn, active_version)
+        endpoint = await self._endpoints.start(defn, active_version, version_label=active_label)
         registry_id = await self._registrar.register(
             defn, endpoint.public_url, uuid.UUID(row.registry_id) if row.registry_id else None
         )
@@ -146,9 +159,40 @@ class DefinitionService:
         return DeploymentInfo(
             name=name,
             version=active_version,
+            version_label=active_label,
             endpoint_url=endpoint.public_url,
             registry_id=registry_id,
         )
+
+    async def _freeze_draft(
+        self, name: str, version_label: str | None
+    ) -> tuple[FlowDefinition, int, str | None]:
+        """Validate the draft and freeze it as the next immutable version."""
+        row = await self._row(name)
+        draft = load_definition(row.draft_json)
+        result = await self.validate(draft)
+        if not result.valid:
+            raise DefinitionInvalidError(result)
+        if version_label is not None and await self._version_by_label(name, version_label):
+            raise DefinitionConflictError(
+                f"version label {version_label!r} is already used by {name!r}"
+            )
+        async with self._db.session() as session, session.begin():
+            new_version = await latest_version(session, name) + 1
+            session.add(
+                VersionRow(
+                    name=name,
+                    version=new_version,
+                    version_label=version_label,
+                    definition_json=dump_definition(draft),
+                )
+            )
+        return draft, new_version, version_label
+
+    async def _version_by_label(self, name: str, label: str) -> int | None:
+        async with self._db.session() as session:
+            found = await version_row_by_label(session, name, label)
+        return found.version if found is not None else None
 
     async def _deploy_ephemeral(self, row: DefinitionRow) -> DeploymentInfo:
         """Playground endpoint for the draft: no registry entry, TTL-bound (§6.2)."""
@@ -161,15 +205,16 @@ class DefinitionService:
             name=row.name, version=0, endpoint_url=endpoint.public_url, registry_id=None
         )
 
-    async def _load_version(self, name: str, version: int) -> FlowDefinition:
+    async def _load_version_row(self, name: str, version: int) -> tuple[FlowDefinition, str | None]:
         async with self._db.session() as session:
-            result = await session.execute(
-                select(VersionRow).where(VersionRow.name == name, VersionRow.version == version)
-            )
-            row = result.scalar_one_or_none()
+            row = await version_row(session, name, version)
         if row is None:
             raise DefinitionNotFoundError(f"{name} version {version}")
-        return load_definition(row.definition_json)
+        return load_definition(row.definition_json), row.version_label
+
+    async def _load_version(self, name: str, version: int) -> FlowDefinition:
+        defn, _ = await self._load_version_row(name, version)
+        return defn
 
     async def undeploy(self, name: str) -> None:
         row = await self._row(name)
@@ -211,6 +256,11 @@ class DefinitionService:
         draft = load_definition(row.draft_json)
         async with self._db.session() as session:
             latest = await latest_version(session, row.name)
+            deployed = (
+                await version_row(session, row.name, row.deployed_version)
+                if row.deployed_version is not None
+                else None
+            )
         endpoint = self._endpoints.endpoint_for(row.name)
         status = row.status
         if status not in ("draft", "deployed", "undeployed"):  # pragma: no cover
@@ -225,6 +275,7 @@ class DefinitionService:
                 "status": status,
                 "latest_version": latest or None,
                 "deployed_version": row.deployed_version,
+                "deployed_version_label": deployed.version_label if deployed else None,
                 "endpoint_url": endpoint.public_url if endpoint is not None else None,
                 "owner": row.owner,
                 "created_at": row.created_at,
@@ -262,8 +313,8 @@ class DefinitionService:
         for row in rows:
             if row.deployed_version is None:
                 continue
-            defn = await self._load_version(row.name, row.deployed_version)
-            endpoint = await self._endpoints.start(defn, row.deployed_version)
+            defn, label = await self._load_version_row(row.name, row.deployed_version)
+            endpoint = await self._endpoints.start(defn, row.deployed_version, version_label=label)
             await self._registrar.register(
                 defn,
                 endpoint.public_url,

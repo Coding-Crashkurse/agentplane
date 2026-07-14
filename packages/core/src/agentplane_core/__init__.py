@@ -72,12 +72,13 @@ from agentplane_core.types import (
     JsonObject,
     JsonSchema,
     PortType,
+    VersionLabel,
     render_documents,
     split_port_ref,
 )
 from agentplane_core.validation import ErrorCode, validate_structure
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 __all__ = [
     "DEPRECATED_NODE_VERSIONS",
@@ -144,6 +145,7 @@ __all__ = [
     "ValidationResult",
     "VectorDBResource",
     "VectorStore",
+    "VersionLabel",
     "agent_card_from_dict",
     "agent_card_to_json_dict",
     "input_ports",

@@ -227,10 +227,22 @@ class RuntimeClient(_BaseClient):
         return DefinitionInfo.model_validate(response.json())
 
     async def deploy(
-        self, name: str, *, version: int | None = None, ephemeral: bool = False
+        self,
+        name: str,
+        *,
+        version: int | None = None,
+        version_label: str | None = None,
+        ephemeral: bool = False,
     ) -> DeploymentInfo:
+        """Deploy the draft (optionally labelled) or re-serve an existing version.
+
+        ``version`` rolls back by deploy counter, ``version_label`` by semantic
+        version — a label that already exists rolls back to it instead of
+        freezing a new version.
+        """
         params: dict[str, str | int | None] = {
             "version": version,
+            "version_label": version_label,
             "ephemeral": "true" if ephemeral else None,
         }
         response = await self._request(
@@ -307,9 +319,18 @@ class SyncRuntimeClient:
         return self._call(lambda c: c.update_draft(name, defn))
 
     def deploy(
-        self, name: str, *, version: int | None = None, ephemeral: bool = False
+        self,
+        name: str,
+        *,
+        version: int | None = None,
+        version_label: str | None = None,
+        ephemeral: bool = False,
     ) -> DeploymentInfo:
-        return self._call(lambda c: c.deploy(name, version=version, ephemeral=ephemeral))
+        return self._call(
+            lambda c: c.deploy(
+                name, version=version, version_label=version_label, ephemeral=ephemeral
+            )
+        )
 
     def undeploy(self, name: str) -> None:
         return self._call(lambda c: c.undeploy(name))

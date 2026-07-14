@@ -12,7 +12,13 @@ from asgi_lifespan import LifespanManager
 
 from agentplane_runtime.app import create_app
 
-from .conftest import REGISTRY_BASE, create_default_resources, load_example, make_settings
+from .conftest import (
+    QDRANT_BASE,
+    REGISTRY_BASE,
+    create_default_resources,
+    load_example,
+    make_settings,
+)
 
 
 async def test_validate_endpoint_reports_stateful_codes(client: httpx.AsyncClient) -> None:
@@ -210,3 +216,80 @@ async def test_deploy_registers_with_registry(client: httpx.AsyncClient) -> None
                 await local_client.post("/api/v1/definitions/echo-agent/undeploy")
             ).status_code == 204
             assert delete_route.called
+
+
+async def test_deploy_with_version_label(client: httpx.AsyncClient) -> None:
+    """Publishers may label a deploy with a semantic version (FEEDBACK 2.3)."""
+    await create_default_resources(client)
+    defn = load_example("echo-agent.yaml")
+    await client.post("/api/v1/definitions", json=defn.canonical_dict())
+
+    first = await client.post(
+        "/api/v1/definitions/echo-agent/deploy", params={"version_label": "1.0.0"}
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["version"] == 1
+    assert first.json()["version_label"] == "1.0.0"
+
+    info = (await client.get("/api/v1/definitions/echo-agent")).json()
+    assert info["deployed_version_label"] == "1.0.0"
+
+    # the label is served on the agent card
+    card = (await client.get("/a2a/echo-agent/.well-known/agent-card.json")).json()
+    assert card["version"] == "1.0.0"
+
+    # a second deploy takes the next counter and its own label
+    updated = defn.model_copy(update={"description": "v2"})
+    await client.put("/api/v1/definitions/echo-agent", json=updated.canonical_dict())
+    second = await client.post(
+        "/api/v1/definitions/echo-agent/deploy", params={"version_label": "1.1.0"}
+    )
+    assert (second.json()["version"], second.json()["version_label"]) == (2, "1.1.0")
+
+    # a known label rolls back to that version instead of freezing a new one
+    rollback = await client.post(
+        "/api/v1/definitions/echo-agent/deploy", params={"version_label": "1.0.0"}
+    )
+    assert (rollback.json()["version"], rollback.json()["version_label"]) == (1, "1.0.0")
+    info = (await client.get("/api/v1/definitions/echo-agent")).json()
+    assert (info["deployed_version"], info["latest_version"]) == (1, 2)
+
+
+async def test_deploy_rejects_malformed_and_conflicting_version_labels(
+    client: httpx.AsyncClient,
+) -> None:
+    await create_default_resources(client)
+    defn = load_example("echo-agent.yaml")
+    await client.post("/api/v1/definitions", json=defn.canonical_dict())
+
+    not_semver = await client.post(
+        "/api/v1/definitions/echo-agent/deploy", params={"version_label": "v1"}
+    )
+    assert not_semver.status_code == 422
+
+    await client.post("/api/v1/definitions/echo-agent/deploy", params={"version_label": "1.0.0"})
+    both = await client.post(
+        "/api/v1/definitions/echo-agent/deploy",
+        params={"version": 1, "version_label": "2.0.0"},
+    )
+    assert both.status_code == 409
+
+
+@respx.mock
+async def test_validate_reports_e022_dimension_mismatch(client: httpx.AsyncClient) -> None:
+    """The collection lives on the retrieval node, so E022 points at that node (FEEDBACK 1.3)."""
+    respx.get(f"{QDRANT_BASE}/collections/support_docs").mock(
+        return_value=httpx.Response(
+            200, json={"result": {"config": {"params": {"vectors": {"size": 768}}}}}
+        )
+    )
+    respx.route(host="runtime.test").pass_through()
+    await create_default_resources(client)  # resource declares dimension 3
+    defn = load_example("support-rag.yaml").canonical_dict()
+
+    body = (await client.post("/api/v1/definitions/validate", json=defn)).json()
+
+    e022 = [i for i in body["issues"] if i["code"] == "E022"]
+    assert body["valid"] is False
+    assert e022[0]["path"] == "nodes/retrieve_1/config/collection"
+    assert "768" in e022[0]["message"]

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from agentplane_runtime.api import RuntimeState, health_router, router
 from agentplane_runtime.auth import Authenticator
@@ -72,6 +73,15 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.mount("/a2a", endpoints.a2a)
     app.mount("/mcp", endpoints.mcp)
+    if cfg.cors_origins:
+        # Outermost middleware, so it also covers the mounted /a2a and /mcp
+        # endpoints — that is the point: a browser talking A2A without a gateway.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cfg.cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     setup_tracing(app, service_name="agentplane-runtime")
     return app
 
@@ -79,7 +89,8 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
 def main() -> None:  # pragma: no cover - process entrypoint
     import uvicorn  # noqa: PLC0415 - only needed for the entrypoint
 
-    uvicorn.run(create_app(), host="0.0.0.0", port=8000)
+    cfg = RuntimeSettings()
+    uvicorn.run(create_app(cfg), host=cfg.host, port=cfg.port)
 
 
 __all__ = ["create_app", "main"]

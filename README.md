@@ -81,11 +81,23 @@ agentplane validate flow.yaml
 export AGENTPLANE_RUNTIME_URL=https://api.example/runtime
 export AGENTPLANE_TOKEN=...
 agentplane resources create -f resources/default-llm.yaml
-agentplane deploy flow.yaml          # -> https://api.example/mcp/support-rag
+agentplane deploy flow.yaml                          # -> https://api.example/mcp/support-rag
+agentplane deploy flow.yaml --version-label 1.2.0    # publish under a semantic version
 
 # discover via the registry
 export AGENTPLANE_REGISTRY_URL=https://api.example/registry
 agentplane search "support" --semantic
+```
+
+Calling a deployed A2A agent is plain JSON-RPC 2.0 over POST — the binding
+requires the `A2A-Version: 1.0` header, and the card at
+`{endpoint}/.well-known/agent-card.json` advertises it under
+`supportedInterfaces[].protocolBinding`:
+
+```bash
+curl -X POST https://api.example/a2a/echo-agent   -H 'A2A-Version: 1.0' -H 'Content-Type: application/json'   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage",
+       "params":{"message":{"messageId":"m1","role":"ROLE_USER",
+                            "parts":[{"text":"ping"}]}}}'
 ```
 
 Same thing from Python:
@@ -102,6 +114,25 @@ async with RuntimeClient("https://api.example/runtime", token="...") as client:
 The SDK is a thin typed wrapper — everything is plain HTTP
 (`/api/v1/definitions`, `/api/v1/resources`, `/api/v1/agents`,
 `/api/v1/agents/search`, `/capabilities`), so any language works.
+
+## Running a service standalone
+
+Both services are standalone-capable (SQLite by default, auth optional) and
+ship a console script — no uvicorn incantation:
+
+```bash
+export AGENTPLANE_RUNTIME_PUBLIC_BASE_URL=http://localhost:8000
+export AGENTPLANE_RUNTIME_SECRET_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
+export AGENTPLANE_RUNTIME_CORS_ORIGINS=http://localhost:5173   # only without a gateway
+agentplane-runtime                                             # or: uvx agentplane-runtime
+```
+
+Settings come from the environment (prefix `AGENTPLANE_RUNTIME_`) or a `.env`
+file in the working directory. `CORS_ORIGINS` is empty by default: in a
+deployed stack agentgateway owns CORS; set it only when a browser talks to the
+runtime directly (e.g. a builder playground). Running a registry locally needs
+`AGENTPLANE_REGISTRY_ALLOW_PRIVATE_URLS=true`, since gateway URLs on loopback
+are otherwise rejected.
 
 ## Local platform stack
 

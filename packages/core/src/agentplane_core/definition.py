@@ -51,6 +51,13 @@ class ExposeConfig(_StrictModel):
     kind: Literal["a2a", "mcp"]
     tool_name: ToolName | None = None
     tool_description: str = ""
+    examples: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Example prompts for this flow. Served as `skill.examples` on the A2A "
+            "agent card so calling agents can route to it."
+        ),
+    )
 
 
 class StartNodeConfig(_StrictModel):
@@ -101,6 +108,15 @@ class RetrievalNodeConfig(_StrictModel):
     collection: str
     top_k: int = Field(default=4, ge=1, le=100)
     filter: JsonObject | None = None
+    min_score: float | None = Field(
+        default=None,
+        description=(
+            "Similarity score threshold. Hits below it are dropped, so a filled "
+            "collection can still yield zero documents — which is what makes an "
+            "empty-result router branch fire. Score semantics follow the "
+            "collection's distance metric (cosine: 1.0 = identical)."
+        ),
+    )
 
 
 RouterInputType = Literal["text", "json", "documents"]

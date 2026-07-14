@@ -81,7 +81,9 @@ async def validate_full(
             )
             continue
         if isinstance(node, RetrievalNode) and isinstance(resource, VectorDBResource):
-            e022 = await resources.check_collection_dimension(resource, node.config.collection)
+            e022 = await resources.check_collection_dimension(
+                resource, node.config.collection, f"nodes/{node.id}/config/collection"
+            )
             if e022 is not None:
                 issues.append(e022)
 
