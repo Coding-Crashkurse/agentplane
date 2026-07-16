@@ -19,8 +19,8 @@ EXAMPLES="$(dirname "$0")/../examples"
 log() { printf '\n\033[1;34m[smoke]\033[0m %s\n' "$*"; }
 fail() { printf '\n\033[1;31m[smoke] FAILED:\033[0m %s\n' "$*"; exit 1; }
 
-log "1/9 docker compose up"
-docker compose -f "$COMPOSE_FILE" up -d --build --wait
+log "1/9 docker compose up (langfuse profile)"
+docker compose -f "$COMPOSE_FILE" --profile langfuse up -d --build --wait
 
 log "2/9 obtaining token (client credentials)"
 TOKEN=$(curl -fsS "$KEYCLOAK_URL/realms/agentplane/protocol/openid-connect/token" \

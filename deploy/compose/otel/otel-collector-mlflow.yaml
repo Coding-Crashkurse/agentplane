@@ -1,0 +1,28 @@
+# OTel collector -> MLflow OTLP ingestion (profile "mlflow").
+# MLflow >= 3.6 accepts OTLP/HTTP traces at <server>/v1/traces when running
+# with a SQL backend store; the target experiment comes from the
+# x-mlflow-experiment-id header (0 = the Default experiment).
+# Docs: https://mlflow.org/docs/latest/genai/tracing/opentelemetry/ingest/
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp_http/mlflow:
+    traces_endpoint: http://mlflow:5000/v1/traces
+    headers:
+      x-mlflow-experiment-id: "0"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/mlflow]

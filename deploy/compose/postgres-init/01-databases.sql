@@ -1,4 +1,5 @@
 CREATE DATABASE keycloak;
 CREATE DATABASE langfuse;
+CREATE DATABASE mlflow;
 CREATE DATABASE registry;
 CREATE DATABASE runtime;

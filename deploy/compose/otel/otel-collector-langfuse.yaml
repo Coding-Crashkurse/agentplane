@@ -1,0 +1,29 @@
+# OTel collector -> Langfuse v3 OTLP ingestion (profile "langfuse").
+# Services export plain OTLP to http://otel-collector:4318; auth to the
+# backend lives here, never in service env.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp_http/langfuse:
+    # The exporter appends /v1/traces -> Langfuse's /api/public/otel/v1/traces.
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      # base64("pk-lf-local:sk-lf-local") — the LANGFUSE_INIT_* bootstrap keys
+      # from compose.yaml (local dev only, not a secret).
+      Authorization: "Basic cGstbGYtbG9jYWw6c2stbGYtbG9jYWw="
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/langfuse]

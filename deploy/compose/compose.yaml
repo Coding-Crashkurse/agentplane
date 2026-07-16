@@ -1,14 +1,20 @@
 # agentplane local platform stack (SPEC §7.3).
 #
 # All client-visible URLs go through traefik + agentgateway; the registry and
-# runtime are never exposed directly. Bring it up with:
+# runtime are never exposed directly. Standard invocation (Langfuse tracing):
 #
-#   docker compose -f deploy/compose/compose.yaml up -d --wait
+#   docker compose -f deploy/compose/compose.yaml --profile langfuse up -d --wait
+#
+# Tracing backends are switchable via profiles: "langfuse" (default choice) or
+# "mlflow". Each profile runs an OTel collector under the shared network alias
+# "otel-collector"; run exactly one of the two profiles at a time. See
+# README.md in this directory for the full runbook.
 
 name: agentplane
 
 services:
   traefik:
+    restart: unless-stopped
     image: traefik:v3.3
     command:
       - --providers.docker=true
@@ -18,8 +24,22 @@ services:
       - "80:80"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    # The network aliases make containers resolve the public hostnames to
+    # traefik, so a token minted via http://auth.localhost carries the same
+    # issuer no matter whether it is validated from the host or from inside
+    # the compose network. Every issuer/JWKS/OIDC URL below uses these names.
+    networks:
+      default:
+        aliases:
+          - auth.localhost
+          - api.localhost
+          - app.localhost
+          - builder.localhost
+          - langfuse.localhost
+          - mlflow.localhost
 
   postgres:
+    restart: unless-stopped
     image: postgres:16
     environment:
       POSTGRES_USER: agentplane
@@ -35,8 +55,17 @@ services:
       retries: 12
 
   keycloak:
+    restart: unless-stopped
     image: quay.io/keycloak/keycloak:26.0
-    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    # admin-fine-grained-authz backs the "platform-admins may grant user/builder
+    # only" setup; the two manual permission clicks are documented in README.md.
+    command:
+      [
+        "start-dev",
+        "--import-realm",
+        "--http-port=8080",
+        "--features=admin-fine-grained-authz",
+      ]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -47,6 +76,7 @@ services:
       KC_HOSTNAME: auth.localhost
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
     volumes:
       - ./keycloak/agentplane-realm.json:/opt/keycloak/data/import/agentplane-realm.json:ro
     depends_on:
@@ -66,55 +96,39 @@ services:
       timeout: 5s
       retries: 30
 
-  langfuse:
-    image: langfuse/langfuse:2
-    environment:
-      DATABASE_URL: postgresql://agentplane:agentplane@postgres/langfuse
-      NEXTAUTH_URL: http://langfuse.localhost
-      NEXTAUTH_SECRET: local-dev-secret-change-me
-      SALT: local-dev-salt-change-me
-      TELEMETRY_ENABLED: "false"
-      LANGFUSE_INIT_ORG_ID: agentplane
-      LANGFUSE_INIT_PROJECT_ID: agentplane
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local
-      LANGFUSE_INIT_USER_EMAIL: admin@example.com
-      LANGFUSE_INIT_USER_PASSWORD: admin12345
-    depends_on:
-      postgres:
-        condition: service_healthy
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.langfuse.rule: Host(`langfuse.localhost`)
-      traefik.http.services.langfuse.loadbalancer.server.port: "3000"
-
   agentgateway:
-    image: ghcr.io/agentgateway/agentgateway:latest
+    restart: unless-stopped
+    image: ghcr.io/agentgateway/agentgateway:0.8.2
     command: ["-f", "/etc/agentgateway/config.yaml"]
     volumes:
       - ./agentgateway/config.yaml:/etc/agentgateway/config.yaml:ro
     environment:
       # forwarded to the LLM provider route; set in deploy/compose/.env
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    # keycloak must be up for the JWKS fetch — agentgateway 0.8 exits hard when
+    # the fetch keeps failing at startup; restart + ordering cover the race.
     depends_on:
-      - runtime
+      runtime:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
     labels:
       traefik.enable: "true"
       traefik.http.routers.gateway.rule: Host(`api.localhost`)
       traefik.http.services.gateway.loadbalancer.server.port: "3000"
 
   registry:
+    restart: unless-stopped
     build:
       context: ../..
       dockerfile: deploy/compose/registry.Dockerfile
     environment:
       AGENTPLANE_REGISTRY_DB_URL: postgresql+asyncpg://agentplane:agentplane@postgres/registry
       AGENTPLANE_REGISTRY_AUTH_MODE: oidc
-      AGENTPLANE_REGISTRY_OIDC_ISSUER: http://keycloak:8080/realms/agentplane
+      AGENTPLANE_REGISTRY_OIDC_ISSUER: http://auth.localhost/realms/agentplane
       AGENTPLANE_REGISTRY_OIDC_AUDIENCE: agentplane
       AGENTPLANE_REGISTRY_HEALTH_INTERVAL_S: "60"
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://langfuse:3000/api/public/otel
-      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic cGstbGYtbG9jYWw6c2stbGYtbG9jYWw="
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,6 +136,7 @@ services:
         condition: service_healthy
 
   runtime:
+    restart: unless-stopped
     build:
       context: ../..
       dockerfile: deploy/compose/runtime.Dockerfile
@@ -129,18 +144,238 @@ services:
       AGENTPLANE_RUNTIME_DB_URL: postgresql+asyncpg://agentplane:agentplane@postgres/runtime
       AGENTPLANE_RUNTIME_PUBLIC_BASE_URL: http://api.localhost
       AGENTPLANE_RUNTIME_REGISTRY_URL: http://registry:8100
-      AGENTPLANE_RUNTIME_SECRET_KEY: ${AGENTPLANE_RUNTIME_SECRET_KEY:-eXktLU5vdC1Gb3ItUHJvZC1Vc2UtT25seS1EZXYtS2V5PQ==}
+      # dev-only Fernet key (base64 of "agentplane-local-dev-fernet-0000");
+      # override with a generated one outside local dev
+      AGENTPLANE_RUNTIME_SECRET_KEY: ${AGENTPLANE_RUNTIME_SECRET_KEY:-YWdlbnRwbGFuZS1sb2NhbC1kZXYtZmVybmV0LTAwMDA=}
       AGENTPLANE_RUNTIME_LLM_BASE_URL: http://agentgateway:3000/v1
       AGENTPLANE_RUNTIME_AUTH_MODE: oidc
-      AGENTPLANE_RUNTIME_OIDC_ISSUER: http://keycloak:8080/realms/agentplane
+      AGENTPLANE_RUNTIME_OIDC_ISSUER: http://auth.localhost/realms/agentplane
       AGENTPLANE_RUNTIME_OIDC_AUDIENCE: agentplane
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://langfuse:3000/api/public/otel
-      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic cGstbGYtbG9jYWw6c2stbGYtbG9jYWw="
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       postgres:
         condition: service_healthy
       keycloak:
         condition: service_healthy
 
+  ui:
+    restart: unless-stopped
+    # CI-built image; the sibling checkout is the build fallback until the
+    # published image exists (docker compose builds when the image is absent).
+    image: ghcr.io/coding-crashkurse/agentplane-ui:latest
+    build:
+      context: ../../../agentplane-ui
+    volumes:
+      - ./ui/config.json:/srv/config.json:ro
+    depends_on:
+      - agentgateway
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.ui.rule: Host(`app.localhost`)
+      traefik.http.services.ui.loadbalancer.server.port: "80"
+
+  builder:
+    restart: unless-stopped
+    # CI-built image; the sibling checkout is the build fallback until the
+    # published image exists (docker compose builds when the image is absent).
+    image: ghcr.io/coding-crashkurse/agentplane-builder:latest
+    build:
+      context: ../../../langgraph_a2a
+    environment:
+      BUILDER_AUTH_MODE: oidc
+      BUILDER_OIDC_ISSUER: http://auth.localhost/realms/agentplane
+      BUILDER_OIDC_AUDIENCE: agentplane
+      BUILDER_OIDC_CLIENT_ID: agentplane-builder
+      BUILDER_RUNTIME_URL: http://agentgateway:3000/runtime
+      BUILDER_REGISTRY_UI_URL: http://app.localhost/registry
+      BUILDER_HOST_URL: http://builder.localhost
+    volumes:
+      - builder-data:/data
+    depends_on:
+      - runtime
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.builder.rule: Host(`builder.localhost`)
+      traefik.http.services.builder.loadbalancer.server.port: "8010"
+
+  otel-collector-langfuse:
+    restart: unless-stopped
+    image: otel/opentelemetry-collector-contrib:0.156.0
+    profiles: [langfuse]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel/otel-collector-langfuse.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      default:
+        aliases:
+          - otel-collector
+    depends_on:
+      - langfuse-web
+
+  otel-collector-mlflow:
+    restart: unless-stopped
+    image: otel/opentelemetry-collector-contrib:0.156.0
+    profiles: [mlflow]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel/otel-collector-mlflow.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      default:
+        aliases:
+          - otel-collector
+    depends_on:
+      - mlflow
+
+  langfuse-web:
+    restart: unless-stopped
+    image: langfuse/langfuse:3.217.0
+    profiles: [langfuse]
+    environment:
+      &langfuse-env
+      DATABASE_URL: postgresql://agentplane:agentplane@postgres/langfuse
+      NEXTAUTH_URL: http://langfuse.localhost
+      NEXTAUTH_SECRET: local-dev-secret-change-me
+      SALT: local-dev-salt-change-me
+      # dev-only key (64 hex); generate a real one for prod: openssl rand -hex 32
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuse-valkey-local
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_INIT_ORG_ID: agentplane
+      LANGFUSE_INIT_ORG_NAME: agentplane
+      LANGFUSE_INIT_PROJECT_ID: agentplane
+      LANGFUSE_INIT_PROJECT_NAME: agentplane
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local
+      LANGFUSE_INIT_USER_EMAIL: admin@example.com
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: admin12345
+    depends_on:
+      &langfuse-depends-on
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.langfuse.rule: Host(`langfuse.localhost`)
+      traefik.http.services.langfuse.loadbalancer.server.port: "3000"
+
+  langfuse-worker:
+    restart: unless-stopped
+    image: langfuse/langfuse-worker:3.217.0
+    profiles: [langfuse]
+    environment:
+      <<: *langfuse-env
+    depends_on: *langfuse-depends-on
+
+  clickhouse:
+    restart: unless-stopped
+    image: clickhouse/clickhouse-server:25.8
+    profiles: [langfuse]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  valkey:
+    restart: unless-stopped
+    image: valkey/valkey:8.1.8
+    profiles: [langfuse]
+    command: ["valkey-server", "--requirepass", "langfuse-valkey-local", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a langfuse-valkey-local ping | grep -q PONG"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  minio:
+    restart: unless-stopped
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: [langfuse]
+    entrypoint: sh
+    # create the 'langfuse' bucket before starting the service
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || curl -sf http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 2s
+
+  mlflow:
+    restart: unless-stopped
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    profiles: [mlflow]
+    # The release image is bare `pip install mlflow` — the postgres driver is
+    # installed at container start (needs network access; a baked CI image
+    # replaces this later).
+    command:
+      - sh
+      - -c
+      - >-
+        pip install --no-cache-dir psycopg2-binary==2.9.10
+        && mlflow server
+        --backend-store-uri postgresql://agentplane:agentplane@postgres/mlflow
+        --host 0.0.0.0 --port 5000
+    environment:
+      # MLflow 3.x DNS-rebinding protection matches the Host header verbatim
+      # (port included): allow the collector's direct calls and the traefik
+      # route.
+      MLFLOW_SERVER_ALLOWED_HOSTS: mlflow:5000,mlflow.localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.mlflow.rule: Host(`mlflow.localhost`)
+      traefik.http.services.mlflow.loadbalancer.server.port: "5000"
+
 volumes:
   pgdata:
+  builder-data:
+  clickhouse-data:
+  clickhouse-logs:
+  valkey-data:
+  minio-data:

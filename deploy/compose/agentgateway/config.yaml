@@ -2,8 +2,18 @@
 # route, static wildcard routes /a2a/* and /mcp/* -> runtime with the a2a
 # policy (agent-card URL rewriting) and JWT validation against Keycloak.
 #
-# Schema reference: https://agentgateway.dev/docs/ — adjust to the exact
-# version you pin; the shape below targets the 0.x config format.
+# Schema: https://github.com/agentgateway/agentgateway/blob/v0.8.2/schema/local.json
+# (verified against the pinned 0.8.2 image). The issuer is the expected `iss`
+# claim — http://auth.localhost/realms/agentplane, matching what Keycloak
+# (KC_HOSTNAME=auth.localhost) mints. The JWKS is fetched from the keycloak
+# service directly: agentgateway's resolver hardcodes *.localhost to loopback
+# (RFC 6761), so the traefik network alias is not reachable from here.
+config:
+  tracing:
+    otlpEndpoint: http://otel-collector:4318
+    otlpProtocol: http
+    randomSampling: true
+
 binds:
   - port: 3000
     listeners:
@@ -16,7 +26,7 @@ binds:
             policies:
               a2a: {}
               jwtAuth:
-                issuer: http://keycloak:8080/realms/agentplane
+                issuer: http://auth.localhost/realms/agentplane
                 audiences: [agentplane]
                 jwks:
                   url: http://keycloak:8080/realms/agentplane/protocol/openid-connect/certs
@@ -30,7 +40,7 @@ binds:
                   pathPrefix: /mcp/
             policies:
               jwtAuth:
-                issuer: http://keycloak:8080/realms/agentplane
+                issuer: http://auth.localhost/realms/agentplane
                 audiences: [agentplane]
                 jwks:
                   url: http://keycloak:8080/realms/agentplane/protocol/openid-connect/certs
@@ -45,7 +55,7 @@ binds:
             policies:
               urlRewrite:
                 path:
-                  prefix: /
+                  prefix: ""
             backends:
               - host: runtime:8000
           - name: registry-api
@@ -55,7 +65,7 @@ binds:
             policies:
               urlRewrite:
                 path:
-                  prefix: /
+                  prefix: ""
             backends:
               - host: registry:8100
 

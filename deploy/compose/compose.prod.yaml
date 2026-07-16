@@ -1,0 +1,102 @@
+# Production overlay — stacked on top of the base file:
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml --profile langfuse up -d
+#
+# Required env (deploy/compose/.env or shell): APP_DOMAIN, API_DOMAIN,
+# AUTH_DOMAIN, TRACES_DOMAIN, BUILDER_DOMAIN, ACME_EMAIL.
+#
+# Read "Production overlay" in README.md before exposing this to the internet
+# — bootstrap credentials MUST be rotated, the agentgateway config.yaml issuer
+# must be switched to https://$AUTH_DOMAIN, and the UI config.json needs the
+# public domains.
+
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.acme.acme.email=${ACME_EMAIL:?ACME_EMAIL required}
+      - --certificatesresolvers.acme.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.acme.acme.httpchallenge.entrypoint=web
+    ports:
+      - "443:443"
+    volumes:
+      - letsencrypt:/letsencrypt
+    # Containers resolve the public domains to traefik directly (same trick as
+    # the *.localhost aliases in the base file); TLS still terminates at
+    # traefik with the ACME certificate, so issuer URLs stay consistent.
+    networks:
+      default:
+        aliases:
+          - ${AUTH_DOMAIN:?AUTH_DOMAIN required}
+          - ${API_DOMAIN:?API_DOMAIN required}
+          - ${APP_DOMAIN:?APP_DOMAIN required}
+          - ${BUILDER_DOMAIN:?BUILDER_DOMAIN required}
+          - ${TRACES_DOMAIN:?TRACES_DOMAIN required}
+
+  keycloak:
+    environment:
+      # Full URL pins the issuer scheme; realm sslRequired should be switched
+      # to "external" after bootstrap (see README).
+      KC_HOSTNAME: https://${AUTH_DOMAIN}
+    labels:
+      traefik.http.routers.keycloak.rule: Host(`${AUTH_DOMAIN}`)
+      traefik.http.routers.keycloak.entrypoints: websecure
+      traefik.http.routers.keycloak.tls.certresolver: acme
+
+  agentgateway:
+    labels:
+      # /v1 (the OpenAI-compatible LLM egress) is deliberately NOT exposed:
+      # it must stay internal to the platform (runtime -> gateway only).
+      traefik.http.routers.gateway.rule: Host(`${API_DOMAIN}`) && !PathPrefix(`/v1`)
+      traefik.http.routers.gateway.entrypoints: websecure
+      traefik.http.routers.gateway.tls.certresolver: acme
+
+  registry:
+    environment:
+      AGENTPLANE_REGISTRY_OIDC_ISSUER: https://${AUTH_DOMAIN}/realms/agentplane
+      AGENTPLANE_REGISTRY_ALLOW_PRIVATE_URLS: "false"
+
+  runtime:
+    environment:
+      AGENTPLANE_RUNTIME_PUBLIC_BASE_URL: https://${API_DOMAIN}
+      AGENTPLANE_RUNTIME_OIDC_ISSUER: https://${AUTH_DOMAIN}/realms/agentplane
+
+  ui:
+    labels:
+      traefik.http.routers.ui.rule: Host(`${APP_DOMAIN}`)
+      traefik.http.routers.ui.entrypoints: websecure
+      traefik.http.routers.ui.tls.certresolver: acme
+
+  builder:
+    environment:
+      BUILDER_OIDC_ISSUER: https://${AUTH_DOMAIN}/realms/agentplane
+      BUILDER_REGISTRY_UI_URL: https://${APP_DOMAIN}/registry
+      BUILDER_HOST_URL: https://${BUILDER_DOMAIN}
+    labels:
+      traefik.http.routers.builder.rule: Host(`${BUILDER_DOMAIN}`)
+      traefik.http.routers.builder.entrypoints: websecure
+      traefik.http.routers.builder.tls.certresolver: acme
+
+  langfuse-web:
+    environment:
+      NEXTAUTH_URL: https://${TRACES_DOMAIN}
+    labels:
+      traefik.http.routers.langfuse.rule: Host(`${TRACES_DOMAIN}`)
+      traefik.http.routers.langfuse.entrypoints: websecure
+      traefik.http.routers.langfuse.tls.certresolver: acme
+
+  mlflow:
+    environment:
+      MLFLOW_SERVER_ALLOWED_HOSTS: mlflow:5000,${TRACES_DOMAIN}
+    labels:
+      traefik.http.routers.mlflow.rule: Host(`${TRACES_DOMAIN}`)
+      traefik.http.routers.mlflow.entrypoints: websecure
+      traefik.http.routers.mlflow.tls.certresolver: acme
+
+volumes:
+  letsencrypt:

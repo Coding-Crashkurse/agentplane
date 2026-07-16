@@ -1,0 +1,36 @@
+{
+  "oidc": {
+    "issuer": "http://auth.localhost/realms/agentplane",
+    "clientId": "agentplane-ui"
+  },
+  "registryUrl": "http://api.localhost/registry",
+  "a2aBaseUrl": "http://api.localhost",
+  "langfuseUrl": "http://langfuse.localhost",
+  "demoAuth": false,
+  "links": [
+    {
+      "id": "builder",
+      "name": "Agent Builder",
+      "description": "Build and deploy agent flows",
+      "icon": "workflow",
+      "url": "http://builder.localhost",
+      "roles": ["builder", "admin"]
+    },
+    {
+      "id": "traces",
+      "name": "Traces",
+      "description": "Traces, evals & costs",
+      "icon": "activity",
+      "url": "http://langfuse.localhost",
+      "roles": ["builder", "admin"]
+    },
+    {
+      "id": "user-management",
+      "name": "User Management",
+      "description": "Manage platform users and roles",
+      "icon": "users",
+      "url": "http://auth.localhost/admin/agentplane/console/",
+      "roles": ["admin"]
+    }
+  ]
+}
