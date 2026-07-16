@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REGISTRY_VERSION = "0.0.2"
+REGISTRY_VERSION = "0.0.3"
 
 
 class RegistrySettings(BaseSettings):
@@ -17,6 +17,7 @@ class RegistrySettings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     roles_claim: str = "realm_access.roles"
+    groups_claim: str = "groups"  # team membership; scopes shared entries
     admin_role: str = "admin"
     health_interval_s: float = 60.0
     health_mcp: bool = True

@@ -61,23 +61,47 @@ class RegistryRegistrar:
         return RegistryClient(self._settings.registry_url, token)
 
     async def register(
-        self, defn: FlowDefinition, public_url: str, existing_id: UUID | None
+        self,
+        defn: FlowDefinition,
+        public_url: str,
+        existing_id: UUID | None,
+        owner: str = "",
+        group: str = "",
     ) -> UUID | None:
-        """One immediate attempt; on failure, retries continue in the background."""
+        """One immediate attempt; on failure, retries continue in the background.
+
+        ``owner``/``group`` attribute the entry to the flow's author and team.
+        The registry honors them only when this runtime authenticates as an admin
+        service, so published entries are attributed to the flow author rather
+        than the runtime (SPEC §7.1).
+        """
         if not self.enabled:
             return None
         try:
-            return await self._register_once(defn, public_url, existing_id)
+            return await self._register_once(defn, public_url, existing_id, owner, group)
         except AgentplaneError as exc:
             logger.warning("registry registration failed (%s); retrying in background", exc)
-            self._spawn(self._retry_register(defn, public_url, existing_id))
+            self._spawn(self._retry_register(defn, public_url, existing_id, owner, group))
             return existing_id
 
     async def _register_once(
-        self, defn: FlowDefinition, public_url: str, existing_id: UUID | None
+        self,
+        defn: FlowDefinition,
+        public_url: str,
+        existing_id: UUID | None,
+        owner: str = "",
+        group: str = "",
     ) -> UUID:
         card = build_card(defn, public_url)
         kind = "mcp_server" if defn.expose.kind == "mcp" else "agent"
+        create = RegistryEntryCreate(
+            kind=kind,
+            card=card,
+            url=public_url,
+            tags=list(defn.tags),
+            owner=owner or None,
+            group=group or None,
+        )
         async with self._client() as client:
             if existing_id is not None:
                 try:
@@ -86,16 +110,10 @@ class RegistryRegistrar:
                         RegistryEntryPatch(card=card, url=public_url, tags=list(defn.tags)),
                     )
                 except AgentplaneError:
-                    entry = await client.register(
-                        RegistryEntryCreate(
-                            kind=kind, card=card, url=public_url, tags=list(defn.tags)
-                        )
-                    )
+                    entry = await client.register(create)
                 return entry.id
             try:
-                entry = await client.register(
-                    RegistryEntryCreate(kind=kind, card=card, url=public_url, tags=list(defn.tags))
-                )
+                entry = await client.register(create)
             except ConflictError:
                 # entry exists from a previous run we lost track of; find + update
                 page = await client.search(defn.name, kind=kind, limit=200)
@@ -111,12 +129,17 @@ class RegistryRegistrar:
             return entry.id
 
     async def _retry_register(
-        self, defn: FlowDefinition, public_url: str, existing_id: UUID | None
+        self,
+        defn: FlowDefinition,
+        public_url: str,
+        existing_id: UUID | None,
+        owner: str = "",
+        group: str = "",
     ) -> None:
         for delay in _RETRY_DELAYS_S:
             await asyncio.sleep(delay)
             try:
-                await self._register_once(defn, public_url, existing_id)
+                await self._register_once(defn, public_url, existing_id, owner, group)
             except AgentplaneError as exc:
                 logger.warning("registry retry failed (%s)", exc)
                 continue

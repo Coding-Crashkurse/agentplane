@@ -14,7 +14,7 @@ import math
 from importlib.util import find_spec
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from agentplane_core import (
     Page,
@@ -94,7 +94,10 @@ class RegistrySearch(SearchBackend):
         if query.status is not None:
             stmt = stmt.where(EntryRow.status == query.status)
         if query.owner is not None:
-            stmt = stmt.where(EntryRow.owner == query.owner)
+            conditions = [EntryRow.owner == query.owner]
+            if query.groups:
+                conditions.append(EntryRow.group.in_(query.groups))
+            stmt = stmt.where(or_(*conditions))
         async with self._db.session() as session:
             rows = (await session.execute(stmt)).scalars().all()
         return [row_to_entry(row) for row in rows]

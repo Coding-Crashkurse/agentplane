@@ -128,7 +128,12 @@ agentplane-runtime                                             # or: uvx agentpl
 ```
 
 Settings come from the environment (prefix `AGENTPLANE_RUNTIME_`) or a `.env`
-file in the working directory. `CORS_ORIGINS` is empty by default: in a
+file in the working directory. Auth is opt-in and bring-your-own-issuer:
+`AUTH_MODE=oidc` plus `OIDC_ISSUER` (any OIDC provider — Keycloak, Auth0,
+Entra, …) turns on per-user/per-team enforcement — you see, manage and *call*
+only what you own or what belongs to one of your teams (`groups` claim,
+configurable via `GROUPS_CLAIM`); admins see everything. With the default
+`AUTH_MODE=none` nothing changes. `CORS_ORIGINS` is empty by default: in a
 deployed stack agentgateway owns CORS; set it only when a browser talks to the
 runtime directly (e.g. a builder playground). Running a registry locally needs
 `AGENTPLANE_REGISTRY_ALLOW_PRIVATE_URLS=true`, since gateway URLs on loopback

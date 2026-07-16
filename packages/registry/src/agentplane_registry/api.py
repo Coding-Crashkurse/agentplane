@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from agentplane_core import (
@@ -23,7 +23,7 @@ from agentplane_core import (
     SearchQuery,
     serialize_card,
 )
-from agentplane_registry.auth import Principal
+from agentplane_registry.auth import AccessScope, Principal
 from agentplane_registry.db import Database, EntryRow, row_to_entry
 from agentplane_registry.search import RegistrySearch
 from agentplane_registry.settings import REGISTRY_VERSION, RegistrySettings
@@ -57,9 +57,23 @@ health_router = APIRouter()
 
 
 def _visible(row: EntryRow, caller: Principal, auth_mode: str) -> bool:
-    if auth_mode == "none" or caller.is_admin:
-        return True
-    return row.owner == caller.sub
+    return AccessScope.for_caller(caller, auth_mode).allows(row.owner, row.group)
+
+
+def _attribution(body: RegistryEntryCreate, caller: Principal, auth_mode: str) -> tuple[str, str]:
+    """The (owner, group) to record.
+
+    A trusted admin caller (the runtime publishing on behalf of a user) may
+    assert both. A regular caller owns what they register and may only attribute
+    it to one of their own groups; anything else falls back to their own subject
+    and no group.
+    """
+    if caller.is_admin and auth_mode == "oidc":
+        return body.owner or caller.sub, body.group or ""
+    group = body.group or ""
+    if group and group not in caller.groups:
+        group = ""
+    return caller.sub, group
 
 
 def _check_url(url: str, settings: RegistrySettings) -> None:
@@ -74,11 +88,13 @@ def _check_url(url: str, settings: RegistrySettings) -> None:
 async def register_entry(body: RegistryEntryCreate, state: State, caller: Caller) -> RegistryEntry:
     _check_url(body.url, state.settings)
     now = datetime.now(UTC)
+    owner, group = _attribution(body, caller, state.settings.auth_mode)
     row = EntryRow(
         id=str(uuid.uuid4()),
         kind=body.kind,
         name=body.card.name,
-        owner=caller.sub,
+        owner=owner,
+        group=group,
         url=body.url,
         card_json=_dump_card(body),
         tags_json=list(body.tags),
@@ -118,9 +134,13 @@ async def list_entries(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="owner=all requires admin")
     stmt = select(EntryRow).order_by(EntryRow.created_at.desc())
     count_stmt = select(func.count()).select_from(EntryRow)
-    if state.settings.auth_mode == "oidc" and owner == "me" and not caller.is_admin:
-        stmt = stmt.where(EntryRow.owner == caller.sub)
-        count_stmt = count_stmt.where(EntryRow.owner == caller.sub)
+    scope = AccessScope.for_caller(caller, state.settings.auth_mode)
+    if owner == "me" and not scope.unrestricted:
+        conditions = [EntryRow.owner == scope.sub]
+        if scope.groups:
+            conditions.append(EntryRow.group.in_(scope.groups))
+        stmt = stmt.where(or_(*conditions))
+        count_stmt = count_stmt.where(or_(*conditions))
     if kind is not None:
         stmt = stmt.where(EntryRow.kind == kind)
         count_stmt = count_stmt.where(EntryRow.kind == kind)
@@ -152,9 +172,7 @@ async def search_entries(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page:
-    owner_filter: str | None = None
-    if state.settings.auth_mode == "oidc" and not caller.is_admin:
-        owner_filter = caller.sub
+    scope = AccessScope.for_caller(caller, state.settings.auth_mode)
     if semantic and not state.search.semantic_enabled:
         response.headers["X-Degraded"] = "semantic"
         semantic = False
@@ -164,7 +182,8 @@ async def search_entries(
         kind=kind,
         status=status_filter,
         semantic=semantic,
-        owner=owner_filter,
+        owner=None if scope.unrestricted else scope.sub,
+        groups=[] if scope.unrestricted else sorted(scope.groups),
         limit=limit,
         offset=offset,
     )
@@ -186,8 +205,11 @@ async def _load_visible(entry_id: uuid.UUID, state: RegistryState, caller: Princ
 
 
 def _require_owner(row: EntryRow, caller: Principal, auth_mode: str) -> None:
-    if auth_mode == "oidc" and not caller.is_admin and row.owner != caller.sub:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="owner or admin required")
+    """Mutations require the owner, a member of the entry's group, or an admin."""
+    if not AccessScope.for_caller(caller, auth_mode).allows(row.owner, row.group):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="owner, group member or admin required"
+        )
 
 
 @router.put("/agents/{entry_id}", response_model=RegistryEntry)

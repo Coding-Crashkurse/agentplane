@@ -11,7 +11,7 @@ import json
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from agentplane_core import (
     FlowDefinition,
@@ -24,6 +24,7 @@ from agentplane_core import (
     ValidationResult,
     VectorDBResource,
 )
+from agentplane_runtime.auth import AccessScope
 from agentplane_runtime.db import (
     RESOURCE_ADAPTER,
     Database,
@@ -114,7 +115,7 @@ class ResourceService:
             )
         return None
 
-    async def create(self, resource: Resource, owner: str) -> Resource:
+    async def create(self, resource: Resource, owner: str, group: str = "") -> Resource:
         async with self._db.session() as session:
             existing = await session.get(ResourceRow, resource.name)
         if existing is not None:
@@ -125,6 +126,7 @@ class ResourceService:
             name=resource.name,
             kind=resource.kind,
             owner=owner,
+            group=group,
             config_json=json.dumps(
                 RESOURCE_ADAPTER.dump_python(stored, mode="json", context={"reveal_secrets": True})
             ),
@@ -135,7 +137,10 @@ class ResourceService:
             session.add(row)
         return self._redacted(stored)
 
-    async def update(self, name: str, resource: Resource, owner: str) -> Resource:
+    async def update(
+        self, name: str, resource: Resource, scope: AccessScope | None = None
+    ) -> Resource:
+        """Update a resource; ``scope`` (when set) restricts to the caller's own/team."""
         if resource.name != name:
             raise ResourceValidationError(
                 ValidationResult(
@@ -152,7 +157,7 @@ class ResourceService:
             )
         async with self._db.session() as session:
             row = await session.get(ResourceRow, name)
-        if row is None:
+        if row is None or (scope is not None and not scope.allows(row.owner, row.group)):
             raise ResourceNotFoundError(name)
         stored = await self._store_secrets(resource)
         async with self._db.session() as session, session.begin():
@@ -165,10 +170,10 @@ class ResourceService:
             fresh.updated_at = datetime.now(UTC)
         return self._redacted(stored)
 
-    async def get(self, name: str) -> Resource:
+    async def get(self, name: str, scope: AccessScope | None = None) -> Resource:
         async with self._db.session() as session:
             row = await session.get(ResourceRow, name)
-        if row is None:
+        if row is None or (scope is not None and not scope.allows(row.owner, row.group)):
             raise ResourceNotFoundError(name)
         return self._redacted(load_resource(row))
 
@@ -180,15 +185,26 @@ class ResourceService:
             raise ResourceNotFoundError(name)
         return load_resource(row)
 
-    async def list(self, kind: str | None = None) -> list[Resource]:
+    async def list(
+        self, kind: str | None = None, scope: AccessScope | None = None
+    ) -> list[Resource]:
         stmt = select(ResourceRow).order_by(ResourceRow.name)
         if kind is not None:
             stmt = stmt.where(ResourceRow.kind == kind)
+        if scope is not None and not scope.unrestricted:
+            conditions = [ResourceRow.owner == scope.sub]
+            if scope.groups:
+                conditions.append(ResourceRow.group.in_(scope.groups))
+            stmt = stmt.where(or_(*conditions))
         async with self._db.session() as session:
             rows = (await session.execute(stmt)).scalars().all()
         return [self._redacted(load_resource(row)) for row in rows]
 
-    async def delete(self, name: str) -> None:
+    async def delete(self, name: str, scope: AccessScope | None = None) -> None:
+        async with self._db.session() as session:
+            row = await session.get(ResourceRow, name)
+        if row is None or (scope is not None and not scope.allows(row.owner, row.group)):
+            raise ResourceNotFoundError(name)
         referencing = await self._referencing_definitions(name)
         if referencing:
             raise ResourceConflictError(

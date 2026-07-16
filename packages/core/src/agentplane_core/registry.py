@@ -104,6 +104,7 @@ class RegistryEntry(_CardCarrier):
     url: str
     tags: list[str] = Field(default_factory=list)
     owner: str
+    group: str = ""
     status: HealthStatus = "starting"
     last_seen: datetime | None = None
     created_at: datetime
@@ -119,6 +120,22 @@ class RegistryEntryCreate(_CardCarrier):
     card: Card
     url: str
     tags: list[str] = Field(default_factory=list)
+    owner: str | None = Field(
+        default=None,
+        description=(
+            "Owner to record for the entry. Honored only for admin callers "
+            "(a trusted registrar publishing on behalf of a user); ignored "
+            "otherwise, where the owner is the authenticated caller's subject."
+        ),
+    )
+    group: str | None = Field(
+        default=None,
+        description=(
+            "Team the entry belongs to; members of the group get access. "
+            "Admin callers may set it freely; other callers only to one of "
+            "their own groups."
+        ),
+    )
 
 
 class RegistryEntryPatch(BaseModel):
@@ -166,6 +183,10 @@ class SearchQuery(BaseModel):
     status: HealthStatus | None = None
     semantic: bool = False
     owner: str | None = None
+    groups: list[str] = Field(
+        default_factory=list,
+        description="Caller's teams — widens the owner scope to entries of these groups.",
+    )
     limit: int = Field(default=50, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
 
@@ -222,6 +243,7 @@ class DefinitionInfo(BaseModel):
     deployed_version_label: VersionLabel | None = None
     endpoint_url: str | None = None
     owner: str = ""
+    group: str = ""
     created_at: datetime
     updated_at: datetime
     definition: FlowDefinition | None = None

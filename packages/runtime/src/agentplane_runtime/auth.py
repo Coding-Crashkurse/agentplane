@@ -21,10 +21,33 @@ from agentplane_runtime.settings import RuntimeSettings
 class Principal:
     sub: str
     roles: frozenset[str] = field(default_factory=frozenset)
+    groups: frozenset[str] = field(default_factory=frozenset)
     is_admin: bool = False
 
 
-ANONYMOUS = Principal(sub="anonymous", roles=frozenset(), is_admin=False)
+ANONYMOUS = Principal(sub="anonymous", roles=frozenset(), groups=frozenset(), is_admin=False)
+
+
+@dataclass(frozen=True)
+class AccessScope:
+    """What a caller may see and manage: their own rows plus their teams' (SPEC §7.1).
+
+    ``unrestricted`` is true when auth is off (single ``anonymous`` owner) or the
+    caller is an admin — then everything is visible.
+    """
+
+    unrestricted: bool
+    sub: str = ""
+    groups: frozenset[str] = field(default_factory=frozenset)
+
+    @classmethod
+    def for_caller(cls, caller: Principal, auth_mode: str) -> AccessScope:
+        if auth_mode != "oidc" or caller.is_admin:
+            return cls(unrestricted=True)
+        return cls(unrestricted=False, sub=caller.sub, groups=caller.groups)
+
+    def allows(self, owner: str, group: str) -> bool:
+        return self.unrestricted or owner == self.sub or (bool(group) and group in self.groups)
 
 
 def _claim_path(claims: dict[str, object], path: str) -> object:
@@ -36,6 +59,11 @@ def _claim_path(claims: dict[str, object], path: str) -> object:
     return value
 
 
+def _claim_set(claims: dict[str, object], path: str) -> frozenset[str]:
+    value = _claim_path(claims, path)
+    return frozenset(str(item) for item in value) if isinstance(value, list) else frozenset()
+
+
 class OidcValidator:
     def __init__(
         self,
@@ -43,6 +71,7 @@ class OidcValidator:
         audience: str,
         roles_claim: str,
         admin_role: str,
+        groups_claim: str = "groups",
         *,
         jwks_ttl_s: float = 300.0,
     ) -> None:
@@ -50,6 +79,7 @@ class OidcValidator:
         self._audience = audience
         self._roles_claim = roles_claim
         self._admin_role = admin_role
+        self._groups_claim = groups_claim
         self._jwks_ttl_s = jwks_ttl_s
         self._jwks: dict[str, jwt.PyJWK] = {}
         self._jwks_fetched_at = 0.0
@@ -91,16 +121,12 @@ class OidcValidator:
             issuer=self._issuer,
             options=options,
         )
-        roles_value = _claim_path(claims, self._roles_claim)
-        roles = (
-            frozenset(str(role) for role in roles_value)
-            if isinstance(roles_value, list)
-            else frozenset()
-        )
+        roles = _claim_set(claims, self._roles_claim)
+        groups = _claim_set(claims, self._groups_claim)
         sub = claims.get("sub")
         if not isinstance(sub, str) or not sub:
             raise jwt.InvalidTokenError("token has no sub")
-        return Principal(sub=sub, roles=roles, is_admin=self._admin_role in roles)
+        return Principal(sub=sub, roles=roles, groups=groups, is_admin=self._admin_role in roles)
 
 
 class Authenticator:
@@ -115,6 +141,7 @@ class Authenticator:
                 settings.oidc_audience,
                 settings.roles_claim,
                 settings.admin_role,
+                settings.groups_claim,
             )
 
     async def authenticate(self, request: Request) -> Principal:
@@ -134,4 +161,4 @@ class Authenticator:
             ) from exc
 
 
-__all__ = ["ANONYMOUS", "Authenticator", "OidcValidator", "Principal"]
+__all__ = ["ANONYMOUS", "AccessScope", "Authenticator", "OidcValidator", "Principal"]

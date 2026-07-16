@@ -214,9 +214,13 @@ class RuntimeClient(_BaseClient):
         response = await self._request("POST", f"{self._prefix}/definitions/validate", json=payload)
         return ValidationResult.model_validate(response.json())
 
-    async def create_draft(self, defn: FlowDefinition) -> DefinitionInfo:
+    async def create_draft(self, defn: FlowDefinition, *, group: str = "") -> DefinitionInfo:
+        """Create a draft; ``group`` shares it with a team the caller belongs to."""
         response = await self._request(
-            "POST", f"{self._prefix}/definitions", json=defn.canonical_dict()
+            "POST",
+            f"{self._prefix}/definitions",
+            json=defn.canonical_dict(),
+            params={"group": group or None},
         )
         return DefinitionInfo.model_validate(response.json())
 
@@ -273,13 +277,15 @@ class RuntimeClient(_BaseClient):
     async def delete(self, name: str) -> None:
         await self._request("DELETE", f"{self._prefix}/definitions/{name}")
 
-    async def create_resource(self, resource: Resource) -> Resource:
+    async def create_resource(self, resource: Resource, *, group: str = "") -> Resource:
+        """Create a resource; ``group`` shares it with a team the caller belongs to."""
         response = await self._request(
             "POST",
             f"{self._prefix}/resources",
             json=_RESOURCE_ADAPTER.dump_python(
                 resource, mode="json", context={"reveal_secrets": True}
             ),
+            params={"group": group or None},
         )
         return _RESOURCE_ADAPTER.validate_python(response.json())
 
@@ -312,8 +318,8 @@ class SyncRuntimeClient:
     def validate(self, defn: FlowDefinition | Mapping[str, object]) -> ValidationResult:
         return self._call(lambda c: c.validate(defn))
 
-    def create_draft(self, defn: FlowDefinition) -> DefinitionInfo:
-        return self._call(lambda c: c.create_draft(defn))
+    def create_draft(self, defn: FlowDefinition, *, group: str = "") -> DefinitionInfo:
+        return self._call(lambda c: c.create_draft(defn, group=group))
 
     def update_draft(self, name: str, defn: FlowDefinition) -> DefinitionInfo:
         return self._call(lambda c: c.update_draft(name, defn))
@@ -347,8 +353,8 @@ class SyncRuntimeClient:
     def delete(self, name: str) -> None:
         return self._call(lambda c: c.delete(name))
 
-    def create_resource(self, resource: Resource) -> Resource:
-        return self._call(lambda c: c.create_resource(resource))
+    def create_resource(self, resource: Resource, *, group: str = "") -> Resource:
+        return self._call(lambda c: c.create_resource(resource, group=group))
 
     def list_resources(self, kind: str | None = None) -> _List[Resource]:
         return self._call(lambda c: c.list_resources(kind))

@@ -37,7 +37,8 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     db = Database(cfg.db_url)
     secrets = FernetSecretsProvider(db, cfg.secret_key)
     resources = ResourceService(db, secrets)
-    endpoints = EndpointManager(resources, cfg)
+    authenticator = Authenticator(cfg)
+    endpoints = EndpointManager(resources, cfg, authenticator)
     registrar = RegistryRegistrar(cfg)
     definitions = DefinitionService(db, resources, endpoints, registrar)
 
@@ -66,8 +67,10 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
             await db.dispose()
 
     app = FastAPI(title="agentplane-runtime", version=RUNTIME_VERSION, lifespan=lifespan)
-    app.state.runtime = RuntimeState(definitions=definitions, resources=resources)
-    app.state.authenticator = Authenticator(cfg)
+    app.state.runtime = RuntimeState(
+        definitions=definitions, resources=resources, auth_mode=cfg.auth_mode
+    )
+    app.state.authenticator = authenticator
     app.state.endpoints = endpoints
     app.include_router(router)
     app.include_router(health_router)

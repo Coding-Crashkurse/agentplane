@@ -1,12 +1,12 @@
 [project]
 name = "agentplane-registry"
-version = "0.0.2"
+version = "0.0.3"
 description = "agentplane discovery service (standalone-capable)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "agentplane-core>=0.0.2,<0.1.0",
+    "agentplane-core>=0.0.3,<0.1.0",
     "fastapi>=0.115",
     "sqlalchemy[asyncio]>=2.0.30",
     "aiosqlite>=0.20",

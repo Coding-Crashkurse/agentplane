@@ -30,6 +30,7 @@ from a2a.types import (
     TaskState,
     TaskStatus,
 )
+from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools import Tool, ToolResult
 from pydantic import PrivateAttr
@@ -44,6 +45,7 @@ from agentplane_core import (
     StartNode,
     single_required_string_input,
 )
+from agentplane_runtime.auth import AccessScope, Authenticator
 from agentplane_runtime.engine import ExecutionContext, FlowRunner, _as_text
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.settings import EPHEMERAL_TTL_S, RuntimeSettings
@@ -266,6 +268,66 @@ class PathDispatcher:
         await app(child_scope, receive, send)
 
 
+class EndpointGuard:
+    """Per-flow invocation authorization (SPEC §7.1).
+
+    With ``auth_mode=oidc`` every request to a served endpoint must carry a JWT
+    whose subject is the flow's owner, a member of its group, or an admin —
+    "who may call" follows the same predicate as "who may edit". Discovery
+    stays public (``public_paths``, GET/HEAD only): agent cards carry no
+    secrets and the registry health job fetches them unauthenticated. With
+    auth off this is a transparent pass-through.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        authenticator: Authenticator,
+        owner: str,
+        group: str,
+        public_paths: frozenset[str] = frozenset(),
+    ) -> None:
+        self._app = app
+        self._authenticator = authenticator
+        self._owner = owner
+        self._group = group
+        self._public_paths = public_paths
+
+    def _is_public(self, scope: Scope) -> bool:
+        if scope.get("method") not in ("GET", "HEAD"):
+            return False
+        path: str = scope.get("path", "")
+        root_path: str = scope.get("root_path", "")
+        sub_path = path[len(root_path) :] if path.startswith(root_path) else path
+        return (sub_path or "/") in self._public_paths
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or self._authenticator.mode != "oidc" or self._is_public(scope):
+            await self._app(scope, receive, send)
+            return
+        request = Request(scope)
+        try:
+            principal = await self._authenticator.authenticate(request)
+        except HTTPException as exc:
+            response: PlainTextResponse | JSONResponse = JSONResponse(
+                {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
+            )
+            await response(scope, receive, send)
+            return
+        if not AccessScope.for_caller(principal, "oidc").allows(self._owner, self._group):
+            response = JSONResponse(
+                {"detail": "not authorized to call this endpoint"},
+                status_code=403,
+            )
+            await response(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
+# Discovery surface that stays public on A2A endpoints (GET/HEAD only).
+_A2A_PUBLIC_PATHS = frozenset({"/", "/.well-known/agent-card.json"})
+
+
 class LifespanHost:
     """Runs an ASGI app's lifespan in a dedicated task.
 
@@ -311,9 +373,15 @@ class Endpoint:
 class EndpointManager:
     """Owns the /a2a and /mcp dispatchers and the running endpoints."""
 
-    def __init__(self, resources: ResourceService, settings: RuntimeSettings) -> None:
+    def __init__(
+        self,
+        resources: ResourceService,
+        settings: RuntimeSettings,
+        authenticator: Authenticator | None = None,
+    ) -> None:
         self._resources = resources
         self._settings = settings
+        self._authenticator = authenticator or Authenticator(settings)
         self.a2a = PathDispatcher()
         self.mcp = PathDispatcher()
         self._endpoints: dict[str, Endpoint] = {}
@@ -355,8 +423,14 @@ class EndpointManager:
         *,
         version_label: str | None = None,
         ephemeral: bool = False,
+        owner: str = "",
+        group: str = "",
     ) -> Endpoint:
-        """(Re)start the endpoint for a definition at a given version."""
+        """(Re)start the endpoint for a definition at a given version.
+
+        ``owner``/``group`` scope who may invoke the endpoint when auth is on
+        (same predicate as editing); with auth off the guard passes through.
+        """
         key = f"_draft/{defn.name}" if ephemeral else defn.name
         await self.stop(key)
         public_url = self.public_url(defn, ephemeral=ephemeral)
@@ -368,10 +442,15 @@ class EndpointManager:
             http_app = server.http_app(path="/", stateless_http=True)
             lifespan = LifespanHost(http_app)
             await lifespan.start()
-            self.mcp.mount(key, http_app)
+            self.mcp.mount(key, EndpointGuard(http_app, self._authenticator, owner, group))
         else:
             app = build_a2a_app(defn, public_url, runner_factory, version_label or str(version))
-            self.a2a.mount(key, app)
+            self.a2a.mount(
+                key,
+                EndpointGuard(
+                    app, self._authenticator, owner, group, public_paths=_A2A_PUBLIC_PATHS
+                ),
+            )
 
         endpoint = Endpoint(
             name=key,
@@ -410,6 +489,7 @@ class EndpointManager:
 
 __all__ = [
     "AGENT_CARD_PATH",
+    "EndpointGuard",
     "EndpointManager",
     "FlowAgentExecutor",
     "PathDispatcher",

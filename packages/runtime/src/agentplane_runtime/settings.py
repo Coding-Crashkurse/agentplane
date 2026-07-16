@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-RUNTIME_VERSION = "0.0.2"
+RUNTIME_VERSION = "0.0.3"
 
 EPHEMERAL_TTL_S = 30 * 60  # SPEC §6.2: draft endpoints live 30 minutes
 
@@ -27,6 +27,7 @@ class RuntimeSettings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     roles_claim: str = "realm_access.roles"
+    groups_claim: str = "groups"  # team membership; scopes shared resources
     admin_role: str = "admin"
     http_timeout_s: float = 60.0
     host: str = "0.0.0.0"

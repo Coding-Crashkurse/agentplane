@@ -29,13 +29,16 @@ def _jwks() -> dict[str, Any]:
     return {"keys": [{**public_jwk, "kid": KID, "alg": "RS256", "use": "sig"}]}
 
 
-def make_token(sub: str, roles: list[str], *, issuer: str = ISSUER) -> str:
+def make_token(
+    sub: str, roles: list[str], groups: list[str] | None = None, *, issuer: str = ISSUER
+) -> str:
     claims = {
         "sub": sub,
         "iss": issuer,
         "aud": AUDIENCE,
         "exp": int(time.time()) + 600,
         "realm_access": {"roles": roles},
+        "groups": groups or [],
     }
     return jwt.encode(claims, _PRIVATE_KEY, algorithm="RS256", headers={"kid": KID})
 
@@ -132,3 +135,52 @@ async def test_wrong_issuer_is_rejected(oidc_client: httpx.AsyncClient) -> None:
 @respx.mock
 async def test_healthz_needs_no_auth(oidc_client: httpx.AsyncClient) -> None:
     assert (await oidc_client.get("/healthz")).status_code == 200
+
+
+@respx.mock
+async def test_admin_registrar_stamps_the_real_owner(oidc_client: httpx.AsyncClient) -> None:
+    """A trusted admin service (the runtime) may publish on behalf of a user."""
+    _mock_issuer()
+    runtime_svc = make_token("runtime", ["admin"])
+    body = {**agent_entry_body("a1"), "owner": "alice"}
+    entry = (await oidc_client.post("/api/v1/agents", json=body, headers=_auth(runtime_svc))).json()
+    assert entry["owner"] == "alice"
+    # ...and alice sees it as hers
+    alice = make_token("alice", ["user"])
+    listing = (await oidc_client.get("/api/v1/agents", headers=_auth(alice))).json()
+    assert [e["card"]["name"] for e in listing["items"]] == ["a1"]
+
+
+@respx.mock
+async def test_non_admin_cannot_spoof_owner(oidc_client: httpx.AsyncClient) -> None:
+    _mock_issuer()
+    mallory = make_token("mallory", ["user"])
+    body = {**agent_entry_body("m1"), "owner": "alice"}
+    entry = (await oidc_client.post("/api/v1/agents", json=body, headers=_auth(mallory))).json()
+    assert entry["owner"] == "mallory"  # asserted owner ignored for non-admins
+
+
+@respx.mock
+async def test_teammates_see_and_manage_group_entries(oidc_client: httpx.AsyncClient) -> None:
+    """Entries published into a team are visible and manageable for its members."""
+    _mock_issuer()
+    runtime_svc = make_token("runtime", ["admin"])
+    body = {**agent_entry_body("pay-agent"), "owner": "user-x", "group": "team-payments"}
+    entry = (await oidc_client.post("/api/v1/agents", json=body, headers=_auth(runtime_svc))).json()
+    assert (entry["owner"], entry["group"]) == ("user-x", "team-payments")
+
+    teammate = make_token("user-y", ["user"], groups=["team-payments"])
+    stranger = make_token("user-z", ["user"], groups=["team-other"])
+
+    listing = (await oidc_client.get("/api/v1/agents", headers=_auth(teammate))).json()
+    assert [e["card"]["name"] for e in listing["items"]] == ["pay-agent"]
+    search = (
+        await oidc_client.get("/api/v1/agents/search", params={"q": "pay"}, headers=_auth(teammate))
+    ).json()
+    assert search["total"] == 1
+    assert (
+        await oidc_client.delete(f"/api/v1/agents/{entry['id']}", headers=_auth(teammate))
+    ).status_code == 204
+
+    # stranger never saw it (and it is gone now anyway)
+    assert (await oidc_client.get("/api/v1/agents", headers=_auth(stranger))).json()["items"] == []

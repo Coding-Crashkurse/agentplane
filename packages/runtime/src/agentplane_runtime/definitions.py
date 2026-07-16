@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from agentplane_core import (
     DefinitionInfo,
@@ -13,6 +13,7 @@ from agentplane_core import (
     FlowDefinition,
     ValidationResult,
 )
+from agentplane_runtime.auth import AccessScope
 from agentplane_runtime.db import (
     Database,
     DefinitionRow,
@@ -65,14 +66,21 @@ class DefinitionService:
     async def validate(self, defn: FlowDefinition | dict[str, object]) -> ValidationResult:
         return await validate_full(defn, self._resources)
 
-    async def _row(self, name: str) -> DefinitionRow:
+    async def _row(self, name: str, scope: AccessScope | None = None) -> DefinitionRow:
+        """Fetch a definition, enforcing access when ``scope`` is set.
+
+        A row the caller may not access is reported as not-found (404), so the
+        API never leaks the existence of another team's definition.
+        """
         async with self._db.session() as session:
             row = await session.get(DefinitionRow, name)
-        if row is None:
+        if row is None or (scope is not None and not scope.allows(row.owner, row.group)):
             raise DefinitionNotFoundError(name)
         return row
 
-    async def create_draft(self, defn: FlowDefinition, owner: str) -> DefinitionInfo:
+    async def create_draft(
+        self, defn: FlowDefinition, owner: str, group: str = ""
+    ) -> DefinitionInfo:
         result = await self.validate(defn)
         if not result.valid:
             raise DefinitionInvalidError(result)
@@ -84,6 +92,7 @@ class DefinitionService:
         row = DefinitionRow(
             name=defn.name,
             owner=owner,
+            group=group,
             status="draft",
             draft_json=dump_definition(defn),
             created_at=now,
@@ -93,11 +102,14 @@ class DefinitionService:
             session.add(row)
         return await self.info(defn.name)
 
-    async def update_draft(self, name: str, defn: FlowDefinition) -> DefinitionInfo:
+    async def update_draft(
+        self, name: str, defn: FlowDefinition, scope: AccessScope | None = None
+    ) -> DefinitionInfo:
         if defn.name != name:
             raise DefinitionConflictError(
                 f"definition name {defn.name!r} does not match path {name!r}"
             )
+        await self._row(name, scope)  # 404 unless the caller may access it
         result = await self.validate(defn)
         if not result.valid:
             raise DefinitionInvalidError(result)
@@ -116,6 +128,7 @@ class DefinitionService:
         version: int | None = None,
         version_label: str | None = None,
         ephemeral: bool = False,
+        scope: AccessScope | None = None,
     ) -> DeploymentInfo:
         """Freeze the draft as a new version and serve it — or re-serve an existing one.
 
@@ -125,7 +138,7 @@ class DefinitionService:
         passing both, or a label that is already taken by another version, is a
         conflict.
         """
-        row = await self._row(name)
+        row = await self._row(name, scope)
         if ephemeral:
             return await self._deploy_ephemeral(row)
         if version is not None and version_label is not None:
@@ -145,9 +158,19 @@ class DefinitionService:
             defn, active_label = await self._load_version_row(name, version)
             active_version = version
 
-        endpoint = await self._endpoints.start(defn, active_version, version_label=active_label)
+        endpoint = await self._endpoints.start(
+            defn,
+            active_version,
+            version_label=active_label,
+            owner=row.owner,
+            group=row.group,
+        )
         registry_id = await self._registrar.register(
-            defn, endpoint.public_url, uuid.UUID(row.registry_id) if row.registry_id else None
+            defn,
+            endpoint.public_url,
+            uuid.UUID(row.registry_id) if row.registry_id else None,
+            owner=row.owner,
+            group=row.group,
         )
         async with self._db.session() as session, session.begin():
             fresh = await session.get(DefinitionRow, name)
@@ -200,7 +223,9 @@ class DefinitionService:
         result = await self.validate(draft)
         if not result.valid:
             raise DefinitionInvalidError(result)
-        endpoint = await self._endpoints.start(draft, 0, ephemeral=True)
+        endpoint = await self._endpoints.start(
+            draft, 0, ephemeral=True, owner=row.owner, group=row.group
+        )
         return DeploymentInfo(
             name=row.name, version=0, endpoint_url=endpoint.public_url, registry_id=None
         )
@@ -216,8 +241,8 @@ class DefinitionService:
         defn, _ = await self._load_version_row(name, version)
         return defn
 
-    async def undeploy(self, name: str) -> None:
-        row = await self._row(name)
+    async def undeploy(self, name: str, scope: AccessScope | None = None) -> None:
+        row = await self._row(name, scope)
         if row.status != "deployed":
             raise DefinitionStateError(f"{name} is not deployed")
         await self._endpoints.stop(name)
@@ -230,8 +255,8 @@ class DefinitionService:
                 fresh.registry_id = None
                 fresh.updated_at = datetime.now(UTC)
 
-    async def delete(self, name: str) -> None:
-        row = await self._row(name)
+    async def delete(self, name: str, scope: AccessScope | None = None) -> None:
+        row = await self._row(name, scope)
         if row.status == "deployed":
             raise DefinitionStateError(f"{name} is deployed; undeploy first")
         async with self._db.session() as session, session.begin():
@@ -246,8 +271,10 @@ class DefinitionService:
             for version_row in versions:
                 await session.delete(version_row)
 
-    async def info(self, name: str, *, include_definition: bool = False) -> DefinitionInfo:
-        row = await self._row(name)
+    async def info(
+        self, name: str, *, include_definition: bool = False, scope: AccessScope | None = None
+    ) -> DefinitionInfo:
+        row = await self._row(name, scope)
         return await self._to_info(row, include_definition=include_definition)
 
     async def _to_info(
@@ -278,21 +305,32 @@ class DefinitionService:
                 "deployed_version_label": deployed.version_label if deployed else None,
                 "endpoint_url": endpoint.public_url if endpoint is not None else None,
                 "owner": row.owner,
+                "group": row.group,
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "definition": draft if include_definition else None,
             }
         )
 
-    async def list(self, status: str | None = None) -> list[DefinitionInfo]:
+    async def list(
+        self, status: str | None = None, scope: AccessScope | None = None
+    ) -> list[DefinitionInfo]:
         stmt = select(DefinitionRow).order_by(DefinitionRow.name)
         if status is not None:
             stmt = stmt.where(DefinitionRow.status == status)
+        if scope is not None and not scope.unrestricted:
+            conditions = [DefinitionRow.owner == scope.sub]
+            if scope.groups:
+                conditions.append(DefinitionRow.group.in_(scope.groups))
+            stmt = stmt.where(or_(*conditions))
         async with self._db.session() as session:
             rows = (await session.execute(stmt)).scalars().all()
         return [await self._to_info(row) for row in rows]
 
-    async def export(self, name: str, version: int | None = None) -> FlowDefinition:
+    async def export(
+        self, name: str, version: int | None = None, scope: AccessScope | None = None
+    ) -> FlowDefinition:
+        await self._row(name, scope)  # 404 unless the caller may access the definition
         if version is not None:
             return await self._load_version(name, version)
         row = await self._row(name)
@@ -314,11 +352,19 @@ class DefinitionService:
             if row.deployed_version is None:
                 continue
             defn, label = await self._load_version_row(row.name, row.deployed_version)
-            endpoint = await self._endpoints.start(defn, row.deployed_version, version_label=label)
+            endpoint = await self._endpoints.start(
+                defn,
+                row.deployed_version,
+                version_label=label,
+                owner=row.owner,
+                group=row.group,
+            )
             await self._registrar.register(
                 defn,
                 endpoint.public_url,
                 uuid.UUID(row.registry_id) if row.registry_id else None,
+                owner=row.owner,
+                group=row.group,
             )
 
 

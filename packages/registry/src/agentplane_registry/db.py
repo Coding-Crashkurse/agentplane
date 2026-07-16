@@ -40,6 +40,7 @@ class EntryRow(Base):
     kind: Mapped[str] = mapped_column(String(16), index=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
     owner: Mapped[str] = mapped_column(String(255), index=True)
+    group: Mapped[str] = mapped_column(String(255), default="", index=True)
     url: Mapped[str] = mapped_column(String(2048))
     card_json: Mapped[str] = mapped_column(String)
     tags_json: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -76,6 +77,7 @@ def row_to_entry(row: EntryRow) -> RegistryEntry:
             "url": row.url,
             "tags": list(row.tags_json),
             "owner": row.owner,
+            "group": row.group,
             "status": row.status,
             "last_seen": row.last_seen,
             "created_at": row.created_at,

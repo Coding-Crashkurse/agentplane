@@ -33,6 +33,7 @@ class DefinitionRow(Base):
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner: Mapped[str] = mapped_column(String(255), index=True)
+    group: Mapped[str] = mapped_column(String(255), default="", index=True)
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     draft_json: Mapped[str] = mapped_column(String)
     deployed_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -66,6 +67,7 @@ class ResourceRow(Base):
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32), index=True)
     owner: Mapped[str] = mapped_column(String(255), index=True)
+    group: Mapped[str] = mapped_column(String(255), default="", index=True)
     config_json: Mapped[str] = mapped_column(String)  # secrets replaced by refs
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
