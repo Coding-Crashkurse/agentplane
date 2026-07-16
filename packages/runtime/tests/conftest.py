@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import httpx
+import jwt
 import pytest
+import respx
 import yaml
 from asgi_lifespan import LifespanManager
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 
 from agentplane_core import FlowDefinition
@@ -91,3 +95,50 @@ async def create_default_resources(client: httpx.AsyncClient) -> None:
     assert response.status_code == 201, response.text
     response = await client.post("/api/v1/resources", json=vector_db_body())
     assert response.status_code == 201, response.text
+
+
+ISSUER = "http://keycloak.test/realms/agentplane"
+AUDIENCE = "agentplane"
+KID = "test-key"
+
+_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def _jwks() -> dict[str, Any]:
+    public_jwk = jwt.algorithms.RSAAlgorithm.to_jwk(_PRIVATE_KEY.public_key(), as_dict=True)
+    return {"keys": [{**public_jwk, "kid": KID, "alg": "RS256", "use": "sig"}]}
+
+
+def make_token(sub: str, roles: list[str], groups: list[str] | None = None) -> str:
+    claims = {
+        "sub": sub,
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "exp": int(time.time()) + 600,
+        "realm_access": {"roles": roles},
+        "groups": groups or [],
+    }
+    return jwt.encode(claims, _PRIVATE_KEY, algorithm="RS256", headers={"kid": KID})
+
+
+def mock_issuer() -> None:
+    respx.get(f"{ISSUER}/.well-known/openid-configuration").mock(
+        return_value=httpx.Response(200, json={"jwks_uri": f"{ISSUER}/jwks"})
+    )
+    respx.get(f"{ISSUER}/jwks").mock(return_value=httpx.Response(200, json=_jwks()))
+
+
+def auth_header(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def oidc_client() -> AsyncIterator[httpx.AsyncClient]:
+    settings = make_settings(auth_mode="oidc", oidc_issuer=ISSUER, oidc_audience=AUDIENCE)
+    application = create_app(settings)
+    async with LifespanManager(application):
+        transport = httpx.ASGITransport(app=application)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://runtime.test"
+        ) as http_client:
+            yield http_client

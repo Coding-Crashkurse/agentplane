@@ -38,6 +38,7 @@ class RuntimeState:
     definitions: DefinitionService
     resources: ResourceService
     auth_mode: str = "none"
+    builder_role: str = "builder"
 
 
 def _state(request: Request) -> RuntimeState:
@@ -57,6 +58,20 @@ Caller = Annotated[Principal, Depends(_principal)]
 def _scope(state: RuntimeState, caller: Principal) -> AccessScope:
     """What the caller may see/manage: their own rows plus their teams' (SPEC §7.1)."""
     return AccessScope.for_caller(caller, state.auth_mode)
+
+
+def _require_builder(state: RuntimeState, caller: Principal) -> None:
+    """Writes need the builder role or admin under OIDC (SPEC §7.1); reads stay role-free.
+
+    A missing role is not an existence question, so this is a 403 — foreign-object
+    404 semantics (ownership scope) are unchanged for callers who do hold the role.
+    """
+    if state.auth_mode != "oidc" or caller.is_admin or state.builder_role in caller.roles:
+        return
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        detail=f"write operations require the {state.builder_role!r} role",
+    )
 
 
 def _chosen_group(state: RuntimeState, caller: Principal, group: str) -> str:
@@ -96,6 +111,7 @@ async def create_definition(
     caller: Caller,
     group: Annotated[str, Query(description="team that owns the flow; empty = private")] = "",
 ) -> DefinitionInfo | JSONResponse:
+    _require_builder(state, caller)
     try:
         return await state.definitions.create_draft(
             body, caller.sub, group=_chosen_group(state, caller, group)
@@ -110,6 +126,7 @@ async def create_definition(
 async def update_definition(
     name: str, body: FlowDefinition, state: State, caller: Caller
 ) -> DefinitionInfo | JSONResponse:
+    _require_builder(state, caller)
     try:
         return await state.definitions.update_draft(name, body, scope=_scope(state, caller))
     except DefinitionInvalidError as exc:
@@ -129,6 +146,7 @@ async def deploy_definition(
     version_label: Annotated[VersionLabel | None, Query()] = None,
     ephemeral: Annotated[bool, Query()] = False,
 ) -> DeploymentInfo | JSONResponse:
+    _require_builder(state, caller)  # ephemeral playground deploys count as writes
     try:
         return await state.definitions.deploy(
             name,
@@ -147,6 +165,7 @@ async def deploy_definition(
 
 @router.post("/definitions/{name}/undeploy", status_code=status.HTTP_204_NO_CONTENT)
 async def undeploy_definition(name: str, state: State, caller: Caller) -> None:
+    _require_builder(state, caller)
     try:
         await state.definitions.undeploy(name, scope=_scope(state, caller))
     except DefinitionNotFoundError:
@@ -197,6 +216,7 @@ async def export_definition(
 
 @router.delete("/definitions/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_definition(name: str, state: State, caller: Caller) -> None:
+    _require_builder(state, caller)
     try:
         await state.definitions.delete(name, scope=_scope(state, caller))
     except DefinitionNotFoundError:
@@ -212,6 +232,7 @@ async def create_resource(
     caller: Caller,
     group: Annotated[str, Query(description="team that owns the resource; empty = private")] = "",
 ) -> Resource:
+    _require_builder(state, caller)
     try:
         return await state.resources.create(
             body, caller.sub, group=_chosen_group(state, caller, group)
@@ -243,6 +264,7 @@ async def get_resource(name: str, state: State, caller: Caller) -> Resource:
 
 @router.put("/resources/{name}", response_model=Resource)
 async def update_resource(name: str, body: Resource, state: State, caller: Caller) -> Resource:
+    _require_builder(state, caller)
     try:
         return await state.resources.update(name, body, scope=_scope(state, caller))
     except ResourceNotFoundError:
@@ -255,6 +277,7 @@ async def update_resource(name: str, body: Resource, state: State, caller: Calle
 
 @router.delete("/resources/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_resource(name: str, state: State, caller: Caller) -> None:
+    _require_builder(state, caller)
     try:
         await state.resources.delete(name, scope=_scope(state, caller))
     except ResourceNotFoundError:

@@ -29,6 +29,7 @@ class RuntimeSettings(BaseSettings):
     roles_claim: str = "realm_access.roles"
     groups_claim: str = "groups"  # team membership; scopes shared resources
     admin_role: str = "admin"
+    builder_role: str = "builder"  # role required for definition/resource writes (SPEC §7.1)
     http_timeout_s: float = 60.0
     host: str = "0.0.0.0"
     port: int = 8000

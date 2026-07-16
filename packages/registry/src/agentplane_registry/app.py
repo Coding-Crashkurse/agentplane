@@ -12,6 +12,7 @@ from agentplane_registry.auth import Authenticator
 from agentplane_registry.db import Database
 from agentplane_registry.embeddings import EmbeddingsClient
 from agentplane_registry.health import HealthJob
+from agentplane_registry.migrate import run_migrations
 from agentplane_registry.search import RegistrySearch
 from agentplane_registry.settings import REGISTRY_VERSION, RegistrySettings
 from agentplane_registry.tracing import setup_tracing
@@ -31,7 +32,7 @@ def create_app(settings: RegistrySettings | None = None, *, run_health_job: bool
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        await db.create_all()
+        await run_migrations(db.engine)
         if run_health_job:
             health_job.start()
         try:

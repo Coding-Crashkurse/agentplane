@@ -15,6 +15,7 @@ from agentplane_runtime.api import RuntimeState, health_router, router
 from agentplane_runtime.auth import Authenticator
 from agentplane_runtime.db import Database
 from agentplane_runtime.definitions import DefinitionService
+from agentplane_runtime.migrate import run_migrations
 from agentplane_runtime.registration import RegistryRegistrar
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.secrets import FernetSecretsProvider
@@ -44,7 +45,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        await db.create_all()
+        await run_migrations(db.engine)
         try:
             await definitions.restore_deployed_endpoints()
         except Exception:
@@ -68,7 +69,10 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
 
     app = FastAPI(title="agentplane-runtime", version=RUNTIME_VERSION, lifespan=lifespan)
     app.state.runtime = RuntimeState(
-        definitions=definitions, resources=resources, auth_mode=cfg.auth_mode
+        definitions=definitions,
+        resources=resources,
+        auth_mode=cfg.auth_mode,
+        builder_role=cfg.builder_role,
     )
     app.state.authenticator = authenticator
     app.state.endpoints = endpoints
