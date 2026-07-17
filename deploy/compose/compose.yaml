@@ -119,6 +119,9 @@ services:
 
   registry:
     restart: unless-stopped
+    # CI-built image; the source build is the fallback until the image is
+    # published (compose builds when the image is absent locally).
+    image: ghcr.io/coding-crashkurse/agentplane-registry:latest
     build:
       context: ../..
       dockerfile: deploy/compose/registry.Dockerfile
@@ -137,6 +140,9 @@ services:
 
   runtime:
     restart: unless-stopped
+    # CI-built image; the source build is the fallback until the image is
+    # published (compose builds when the image is absent locally).
+    image: ghcr.io/coding-crashkurse/agentplane-runtime:latest
     build:
       context: ../..
       dockerfile: deploy/compose/runtime.Dockerfile

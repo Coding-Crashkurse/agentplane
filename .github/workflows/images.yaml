@@ -1,0 +1,54 @@
+name: images
+
+# Publishes the registry and runtime service images to ghcr, so the compose
+# stack (and the future deploy repo) can PULL images instead of building from
+# source. Deliberately decoupled from release.yaml (PyPI packages): pushes to
+# main publish `:latest`, so the images track main without cutting a package
+# release. A `v*` tag additionally publishes the semver. Both Dockerfiles build
+# from the repo root (same context the compose stack uses).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "deploy/compose/registry.Dockerfile"
+      - "deploy/compose/runtime.Dockerfile"
+      - ".github/workflows/images.yaml"
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: agentplane-registry
+            dockerfile: deploy/compose/registry.Dockerfile
+          - name: agentplane-runtime
+            dockerfile: deploy/compose/runtime.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: compute tags
+        run: |
+          IMG="ghcr.io/coding-crashkurse/${{ matrix.name }}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "TAGS=${IMG}:${GITHUB_REF_NAME#v}"$'\n'"${IMG}:latest" >> "$GITHUB_ENV"
+          else
+            echo "TAGS=${IMG}:latest"$'\n'"${IMG}:sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ env.TAGS }}
