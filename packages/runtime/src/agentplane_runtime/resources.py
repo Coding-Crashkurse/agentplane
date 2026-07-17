@@ -38,6 +38,12 @@ from agentplane_runtime.vector import VectorDBError, reader_for
 
 _SECRET_FIELDS = ("api_key_secret", "dsn_secret", "auth_secret")
 
+# Definition validation reads the collection's vector size over the network
+# (the established design — the dimension lives in the DB, not the definition),
+# but a Validate call must never hang on an unreachable DB. This bounds that
+# single probe; a timeout is treated exactly like "unreachable" -> no E022.
+_VALIDATE_DIMENSION_TIMEOUT_S = 3.0
+
 
 class ResourceConflictError(Exception):
     """Resource exists (create) or is still referenced (delete)."""
@@ -82,12 +88,15 @@ class ResourceService:
     async def check_collection_dimension(
         self, resource: VectorDBResource, collection: str, path: str
     ) -> ValidationIssue | None:
-        """E022 for a concrete collection (SPEC §3.7).
+        """E022 for a concrete collection (SPEC §3.7/§6.3).
 
         The collection lives on the retrieval *node*, not on the resource, so
         this check only has something to compare during definition validation —
-        which is why ``path`` points at the offending node. An unreachable vector
-        DB is not an E022: it surfaces at execution time, not as a schema error.
+        which is why ``path`` points at the offending node. The resource's
+        declared ``embedding.dimension`` is compared against the collection's
+        actual vector size, read from the DB with a short bounded timeout. An
+        unreachable vector DB (or a timeout) is not an E022: it surfaces at
+        execution time, not as a schema error.
         """
         api_key, dsn = "", ""
         try:
@@ -98,7 +107,9 @@ class ResourceService:
         except KeyError:
             pass
         try:
-            reader = await reader_for(resource, api_key=api_key, dsn=dsn)
+            reader = await reader_for(
+                resource, api_key=api_key, dsn=dsn, timeout=_VALIDATE_DIMENSION_TIMEOUT_S
+            )
             actual = await reader.collection_dimension(collection)
         except VectorDBError:
             return None  # unreachable — runtime errors surface at execution time

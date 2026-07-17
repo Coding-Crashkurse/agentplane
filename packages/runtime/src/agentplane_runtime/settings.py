@@ -33,6 +33,10 @@ class RuntimeSettings(BaseSettings):
     http_timeout_s: float = 60.0
     host: str = "0.0.0.0"
     port: int = 8000
+    # SaaS guard-rail: cap how many non-ephemeral definitions one owner may keep
+    # deployed at once. 0 = unlimited (default). Admins bypass; redeploying an
+    # already-deployed definition does not consume an extra slot (SPEC §7.2).
+    max_deployments_per_owner: int = 0
     # Browsers only reach the endpoints directly when the runtime runs without a
     # gateway (local builder playground). In production agentgateway owns CORS,
     # so this stays empty and no middleware is installed. "*" allows any origin.

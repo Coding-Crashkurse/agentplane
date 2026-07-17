@@ -17,10 +17,13 @@ class VectorDBError(RuntimeError):
     """Vector DB request failed."""
 
 
+DEFAULT_TIMEOUT_S = 30.0
+
+
 class QdrantReader:
     """Qdrant REST access: collection info + similarity search."""
 
-    def __init__(self, url: str, api_key: str = "", *, timeout: float = 30.0) -> None:
+    def __init__(self, url: str, api_key: str = "", *, timeout: float = DEFAULT_TIMEOUT_S) -> None:
         self._url = url.rstrip("/")
         self._headers = {"api-key": api_key} if api_key else {}
         self._timeout = timeout
@@ -83,26 +86,37 @@ class QdrantReader:
 class PgvectorReader:
     """pgvector access via asyncpg ([postgres] extra); degrades with a clear error."""
 
-    def __init__(self, dsn: str, *, table_prefix: str = "") -> None:
+    def __init__(self, dsn: str, *, table_prefix: str = "", timeout: float | None = None) -> None:
         if find_spec("asyncpg") is None:
             raise VectorDBError("pgvector resources need the [postgres] extra (asyncpg) installed")
         self._dsn = dsn
         self._table_prefix = table_prefix
+        self._timeout = timeout if timeout is not None else DEFAULT_TIMEOUT_S
+
+    async def _connect(self) -> object:
+        import asyncpg  # noqa: PLC0415 - optional [postgres] extra
+
+        try:
+            return await asyncpg.connect(self._dsn, timeout=self._timeout)
+        except (OSError, asyncpg.PostgresError) as exc:
+            raise VectorDBError(f"pgvector unreachable: {exc}") from exc
 
     async def collection_dimension(self, collection: str) -> int:
         import asyncpg  # noqa: PLC0415 - optional [postgres] extra
 
-        conn = await asyncpg.connect(self._dsn)
+        conn = await self._connect()
         try:
-            row = await conn.fetchrow(
+            row = await conn.fetchrow(  # type: ignore[attr-defined]
                 """
                 SELECT atttypmod AS dim FROM pg_attribute
                 WHERE attrelid = $1::regclass AND attname = 'embedding'
                 """,
                 collection,
             )
+        except asyncpg.PostgresError as exc:
+            raise VectorDBError(f"cannot read collection {collection!r}: {exc}") from exc
         finally:
-            await conn.close()
+            await conn.close()  # type: ignore[attr-defined]
         if row is None or not isinstance(row["dim"], int) or row["dim"] <= 0:
             raise VectorDBError(f"table {collection!r} has no readable embedding dimension")
         return int(row["dim"])
@@ -116,14 +130,12 @@ class PgvectorReader:
         *,
         min_score: float | None = None,
     ) -> list[Document]:
-        import asyncpg  # noqa: PLC0415 - optional [postgres] extra
-
         if not collection.replace("_", "").isalnum():
             raise VectorDBError(f"invalid collection name {collection!r}")
         vector_literal = "[" + ",".join(f"{v:.8f}" for v in vector) + "]"
-        conn = await asyncpg.connect(self._dsn)
+        conn = await self._connect()
         try:
-            rows = await conn.fetch(
+            rows = await conn.fetch(  # type: ignore[attr-defined]
                 f"""
                 SELECT text, metadata, 1 - (embedding <=> $1::vector) AS score
                 FROM {collection} ORDER BY embedding <=> $1::vector LIMIT $2
@@ -132,7 +144,7 @@ class PgvectorReader:
                 top_k,
             )
         finally:
-            await conn.close()
+            await conn.close()  # type: ignore[attr-defined]
         documents: list[Document] = []
         for row in rows:
             score = float(row["score"])
@@ -146,11 +158,31 @@ class PgvectorReader:
 Reader = QdrantReader | PgvectorReader
 
 
-async def reader_for(resource: VectorDBResource, *, api_key: str = "", dsn: str = "") -> Reader:
-    """Build the right reader for a VectorDB resource."""
+async def reader_for(
+    resource: VectorDBResource,
+    *,
+    api_key: str = "",
+    dsn: str = "",
+    timeout: float | None = None,
+) -> Reader:
+    """Build the right reader for a VectorDB resource.
+
+    ``timeout`` bounds the connection/request: definition validation passes a
+    short timeout so a slow or unreachable DB fails fast (surfacing as a
+    ``VectorDBError`` the E022 check treats as "no answer", not an error);
+    execution leaves it at the reader default.
+    """
+    reader_timeout = DEFAULT_TIMEOUT_S if timeout is None else timeout
     if resource.kind == "qdrant":
-        return QdrantReader(resource.url, api_key)
-    return PgvectorReader(dsn or resource.url)
+        return QdrantReader(resource.url, api_key, timeout=reader_timeout)
+    return PgvectorReader(dsn or resource.url, timeout=reader_timeout)
 
 
-__all__ = ["PgvectorReader", "QdrantReader", "Reader", "VectorDBError", "reader_for"]
+__all__ = [
+    "DEFAULT_TIMEOUT_S",
+    "PgvectorReader",
+    "QdrantReader",
+    "Reader",
+    "VectorDBError",
+    "reader_for",
+]

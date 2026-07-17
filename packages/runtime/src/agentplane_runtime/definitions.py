@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 
 from agentplane_core import (
@@ -18,6 +19,7 @@ from agentplane_runtime.db import (
     Database,
     DefinitionRow,
     VersionRow,
+    deployed_count,
     dump_definition,
     latest_version,
     load_definition,
@@ -48,6 +50,30 @@ class DefinitionInvalidError(Exception):
         self.result = result
 
 
+class DeploymentQuotaExceeded(BaseModel):
+    """Machine-readable 429 body when an owner's deployment cap is hit (SPEC §7.2).
+
+    Not a validation problem, so it carries no ``E0xx`` code — the ``error``
+    discriminator is the stable machine key instead.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    error: str = "deployment_quota_exceeded"
+    owner: str
+    limit: int
+    deployed: int
+    message: str
+
+
+class DefinitionQuotaError(Exception):
+    """Raised when a deploy would push an owner past ``max_deployments_per_owner``."""
+
+    def __init__(self, body: DeploymentQuotaExceeded) -> None:
+        super().__init__(body.message)
+        self.body = body
+
+
 class DefinitionService:
     """Owns definitions and their lifecycle: draft, deploy, undeploy, delete."""
 
@@ -57,11 +83,14 @@ class DefinitionService:
         resources: ResourceService,
         endpoints: EndpointManager,
         registrar: RegistryRegistrar,
+        *,
+        max_deployments_per_owner: int = 0,
     ) -> None:
         self._db = db
         self._resources = resources
         self._endpoints = endpoints
         self._registrar = registrar
+        self._max_deployments_per_owner = max_deployments_per_owner
 
     async def validate(self, defn: FlowDefinition | dict[str, object]) -> ValidationResult:
         return await validate_full(defn, self._resources)
@@ -128,6 +157,7 @@ class DefinitionService:
         version: int | None = None,
         version_label: str | None = None,
         ephemeral: bool = False,
+        bypass_quota: bool = False,
         scope: AccessScope | None = None,
     ) -> DeploymentInfo:
         """Freeze the draft as a new version and serve it — or re-serve an existing one.
@@ -136,11 +166,12 @@ class DefinitionService:
         the publisher, unique per definition). Rollback selects an existing
         version by ``version`` (the deploy counter) or by ``version_label``;
         passing both, or a label that is already taken by another version, is a
-        conflict.
+        conflict. ``bypass_quota`` skips the per-owner deployment cap (admins).
         """
         row = await self._row(name, scope)
         if ephemeral:
             return await self._deploy_ephemeral(row)
+        await self._enforce_deployment_quota(row, bypass_quota)
         if version is not None and version_label is not None:
             raise DefinitionConflictError(
                 "pass either 'version' (rollback by counter) or 'version_label', not both"
@@ -186,6 +217,31 @@ class DefinitionService:
             endpoint_url=endpoint.public_url,
             registry_id=registry_id,
         )
+
+    async def _enforce_deployment_quota(self, row: DefinitionRow, bypass: bool) -> None:
+        """Cap concurrently-deployed non-ephemeral definitions per owner (SPEC §7.2).
+
+        A redeploy/rollback of an already-deployed definition consumes no new
+        slot (its status is already ``deployed``, so it is already counted).
+        Admins bypass; ``limit <= 0`` means unlimited.
+        """
+        limit = self._max_deployments_per_owner
+        if bypass or limit <= 0 or row.status == "deployed":
+            return
+        async with self._db.session() as session:
+            deployed = await deployed_count(session, row.owner)
+        if deployed >= limit:
+            raise DefinitionQuotaError(
+                DeploymentQuotaExceeded(
+                    owner=row.owner,
+                    limit=limit,
+                    deployed=deployed,
+                    message=(
+                        f"owner {row.owner!r} already has {deployed} deployed "
+                        f"definitions (limit {limit}); undeploy one before deploying another"
+                    ),
+                )
+            )
 
     async def _freeze_draft(
         self, name: str, version_label: str | None
@@ -372,6 +428,8 @@ __all__ = [
     "DefinitionConflictError",
     "DefinitionInvalidError",
     "DefinitionNotFoundError",
+    "DefinitionQuotaError",
     "DefinitionService",
     "DefinitionStateError",
+    "DeploymentQuotaExceeded",
 ]

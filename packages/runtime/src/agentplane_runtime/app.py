@@ -41,7 +41,13 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     authenticator = Authenticator(cfg)
     endpoints = EndpointManager(resources, cfg, authenticator)
     registrar = RegistryRegistrar(cfg)
-    definitions = DefinitionService(db, resources, endpoints, registrar)
+    definitions = DefinitionService(
+        db,
+        resources,
+        endpoints,
+        registrar,
+        max_deployments_per_owner=cfg.max_deployments_per_owner,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

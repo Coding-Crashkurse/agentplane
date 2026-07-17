@@ -22,6 +22,7 @@ from agentplane_runtime.definitions import (
     DefinitionConflictError,
     DefinitionInvalidError,
     DefinitionNotFoundError,
+    DefinitionQuotaError,
     DefinitionService,
     DefinitionStateError,
 )
@@ -153,10 +154,15 @@ async def deploy_definition(
             version=version,
             version_label=version_label,
             ephemeral=ephemeral,
+            bypass_quota=caller.is_admin,
             scope=_scope(state, caller),
         )
     except DefinitionInvalidError as exc:
         return _validation_response(exc.result)
+    except DefinitionQuotaError as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, detail=exc.body.model_dump(mode="json")
+        ) from None
     except DefinitionNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from None
     except DefinitionConflictError as exc:

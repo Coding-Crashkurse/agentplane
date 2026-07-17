@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 
 from pydantic import TypeAdapter
-from sqlalchemy import DateTime, Integer, String, UniqueConstraint, select
+from sqlalchemy import DateTime, Integer, String, UniqueConstraint, func, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -122,6 +122,16 @@ async def latest_version(session: AsyncSession, name: str) -> int:
     return first or 0
 
 
+async def deployed_count(session: AsyncSession, owner: str) -> int:
+    """How many non-ephemeral definitions this owner currently keeps deployed."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(DefinitionRow)
+        .where(DefinitionRow.owner == owner, DefinitionRow.status == "deployed")
+    )
+    return result.scalar_one()
+
+
 async def version_row(session: AsyncSession, name: str, version: int) -> VersionRow | None:
     result = await session.execute(
         select(VersionRow).where(VersionRow.name == name, VersionRow.version == version)
@@ -144,6 +154,7 @@ __all__ = [
     "ResourceRow",
     "SecretRow",
     "VersionRow",
+    "deployed_count",
     "dump_definition",
     "latest_version",
     "load_definition",

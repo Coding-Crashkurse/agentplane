@@ -293,3 +293,20 @@ async def test_validate_reports_e022_dimension_mismatch(client: httpx.AsyncClien
     assert body["valid"] is False
     assert e022[0]["path"] == "nodes/retrieve_1/config/collection"
     assert "768" in e022[0]["message"]
+
+
+@respx.mock
+async def test_validate_unreachable_vector_db_is_not_e022(client: httpx.AsyncClient) -> None:
+    """An unreachable vector DB never yields E022; it surfaces at execution (SPEC §6.3)."""
+    respx.get(f"{QDRANT_BASE}/collections/support_docs").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    respx.route(host="runtime.test").pass_through()
+    await create_default_resources(client)  # resource declares dimension 3
+    defn = load_example("support-rag.yaml").canonical_dict()
+
+    body = (await client.post("/api/v1/definitions/validate", json=defn)).json()
+
+    assert [i for i in body["issues"] if i["code"] == "E022"] == []
+    # nothing else is wrong with the flow, so an unreadable dimension leaves it valid
+    assert body["valid"] is True

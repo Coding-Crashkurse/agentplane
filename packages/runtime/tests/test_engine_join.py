@@ -10,19 +10,36 @@ the other branch, and its output won the race on ``end.input``.
 
 from __future__ import annotations
 
+from collections import Counter
+
 import httpx
 import respx
 from cryptography.fernet import Fernet
 
-from agentplane_core import FlowDefinition, ModelProviderResource, VectorDBResource
+from agentplane_core import FlowDefinition, ModelProviderResource, Node, VectorDBResource
 from agentplane_runtime.db import Database
-from agentplane_runtime.engine import ExecutionContext, FlowRunner
+from agentplane_runtime.engine import ExecutionContext, FlowRunner, PortValue
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.secrets import FernetSecretsProvider
 
 from .conftest import LLM_BASE, QDRANT_BASE, load_example, make_settings, vector_db_body
 
 SEARCH_URL = f"{QDRANT_BASE}/collections/support_docs/points/search"
+
+
+def _count_executions(runner: FlowRunner) -> Counter[str]:
+    """Spy on the per-node executor: it runs a node's body only when the node
+    actually fires (the readiness/dedup guard skips re-triggers without calling
+    it), so the returned counter is the true per-node execution count."""
+    counts: Counter[str] = Counter()
+    original = runner._run
+
+    async def counting(node: Node, values: dict[str, PortValue]) -> dict[str, PortValue]:
+        counts[node.id] += 1
+        return await original(node, values)
+
+    runner._run = counting  # type: ignore[method-assign]
+    return counts
 
 
 async def _runner(defn: FlowDefinition) -> FlowRunner:
@@ -97,6 +114,58 @@ async def test_router_found_branch_runs_the_llm_once() -> None:
 
     assert result == "Reset it."
     assert llm.call_count == 1
+
+
+@respx.mock
+async def test_fan_in_executes_each_node_exactly_once() -> None:
+    """Direct execution-count pin: `call_1` fans in from `start_1` AND `retrieve_1`
+    (a join across two graph depths), yet every node — including the shared LLM
+    node — executes exactly once (SPEC §6.4)."""
+    _mock_embeddings()
+    _mock_search({"score": 0.9, "payload": {"text": "Reset the router.", "source": "kb/1"}})
+    _mock_llm("Please reset the router.")
+
+    runner = await _runner(load_example("support-rag.yaml"))
+    counts = _count_executions(runner)
+    await runner.execute({"query": "wifi broken"})
+
+    assert counts == Counter({"start_1": 1, "retrieve_1": 1, "call_1": 1, "end_1": 1})
+
+
+@respx.mock
+async def test_router_untaken_branch_node_stays_dormant() -> None:
+    """Nothing retrieved -> router picks the `missing` branch; the LLM node on the
+    untaken `found` branch never executes, and no node runs twice (SPEC §6.4)."""
+    _mock_embeddings()
+    _mock_search()  # empty result set -> the `empty`/default branch fires
+    _mock_llm("should never be produced")
+
+    runner = await _runner(load_example("rag-with-fallback.yaml"))
+    counts = _count_executions(runner)
+    result = await runner.execute({"query": "unknown topic"})
+
+    assert result == "I have no information about that in the knowledge base."
+    assert counts["call_1"] == 0  # untaken branch stays dormant
+    assert counts == Counter(
+        {"start_1": 1, "retrieve_1": 1, "check_1": 1, "fallback_1": 1, "end_1": 1}
+    )
+
+
+@respx.mock
+async def test_router_found_branch_runs_llm_once_fallback_dormant() -> None:
+    """Documents retrieved -> the `found` branch runs the LLM once; the fallback
+    template on the untaken branch stays dormant (SPEC §6.4)."""
+    _mock_embeddings()
+    _mock_search({"score": 0.8, "payload": {"text": "Reset the router.", "source": "kb/1"}})
+    _mock_llm("Reset it.")
+
+    runner = await _runner(load_example("rag-with-fallback.yaml"))
+    counts = _count_executions(runner)
+    result = await runner.execute({"query": "wifi broken"})
+
+    assert result == "Reset it."
+    assert counts["fallback_1"] == 0  # untaken branch stays dormant
+    assert counts == Counter({"start_1": 1, "retrieve_1": 1, "check_1": 1, "call_1": 1, "end_1": 1})
 
 
 @respx.mock
