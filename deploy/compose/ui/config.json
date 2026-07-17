@@ -3,9 +3,11 @@
     "issuer": "http://auth.localhost/realms/agentplane",
     "clientId": "agentplane-ui"
   },
-  "registryUrl": "http://api.localhost/registry",
+  "registryUrl": "http://api.localhost/registry/api/v1",
   "a2aBaseUrl": "http://api.localhost",
   "langfuseUrl": "http://langfuse.localhost",
+  "traceUrlTemplate": "http://langfuse.localhost/project/agentplane/traces/{traceId}",
+  "adminApiUrl": "/kc-admin/admin/realms/agentplane",
   "demoAuth": false,
   "links": [
     {

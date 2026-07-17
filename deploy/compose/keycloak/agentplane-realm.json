@@ -6,19 +6,39 @@
   "resetPasswordAllowed": true,
   "roles": {
     "realm": [
-      { "name": "admin", "description": "agentplane platform admin" },
-      { "name": "user", "description": "agentplane platform user" },
-      { "name": "builder", "description": "agentplane flow builder" }
+      {
+        "name": "admin",
+        "description": "agentplane platform admin"
+      },
+      {
+        "name": "user",
+        "description": "agentplane platform user"
+      },
+      {
+        "name": "builder",
+        "description": "agentplane flow builder"
+      }
     ]
   },
   "groups": [
     {
       "name": "platform-admins",
       "path": "/platform-admins",
-      "realmRoles": ["admin"],
+      "realmRoles": [
+        "admin"
+      ],
       "clientRoles": {
-        "realm-management": ["view-users", "query-users", "manage-users"]
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "manage-users",
+          "view-realm"
+        ]
       }
+    },
+    {
+      "name": "acme",
+      "path": "/acme"
     }
   ],
   "users": [
@@ -29,9 +49,22 @@
       "emailVerified": true,
       "firstName": "Demo",
       "lastName": "Admin",
-      "credentials": [{ "type": "password", "value": "admin", "temporary": false }],
-      "realmRoles": ["admin", "user", "builder"],
-      "groups": ["/platform-admins"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin",
+        "user",
+        "builder"
+      ],
+      "groups": [
+        "/platform-admins",
+        "/acme"
+      ]
     },
     {
       "username": "demo-user",
@@ -40,8 +73,16 @@
       "emailVerified": true,
       "firstName": "Demo",
       "lastName": "User",
-      "credentials": [{ "type": "password", "value": "user", "temporary": false }],
-      "realmRoles": ["user"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "user",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "user"
+      ]
     },
     {
       "username": "demo-builder",
@@ -50,8 +91,17 @@
       "emailVerified": true,
       "firstName": "Demo",
       "lastName": "Builder",
-      "credentials": [{ "type": "password", "value": "builder", "temporary": false }],
-      "realmRoles": ["user", "builder"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "builder",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "user",
+        "builder"
+      ]
     }
   ],
   "clients": [
@@ -65,7 +115,12 @@
       "serviceAccountsEnabled": true,
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": false,
-      "defaultClientScopes": ["basic", "roles", "profile", "email"],
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "profile",
+        "email"
+      ],
       "protocolMappers": [
         {
           "name": "audience",
@@ -74,6 +129,18 @@
           "config": {
             "included.client.audience": "agentplane",
             "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
           }
         }
       ]
@@ -86,13 +153,22 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["http://app.localhost/*"],
-      "webOrigins": ["http://app.localhost"],
+      "redirectUris": [
+        "http://app.localhost/*"
+      ],
+      "webOrigins": [
+        "http://app.localhost"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://app.localhost/*"
       },
-      "defaultClientScopes": ["basic", "roles", "profile", "email"],
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "profile",
+        "email"
+      ],
       "protocolMappers": [
         {
           "name": "audience",
@@ -101,6 +177,18 @@
           "config": {
             "included.client.audience": "agentplane",
             "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
           }
         }
       ]
@@ -113,13 +201,22 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["http://builder.localhost/*"],
-      "webOrigins": ["http://builder.localhost"],
+      "redirectUris": [
+        "http://builder.localhost/*"
+      ],
+      "webOrigins": [
+        "http://builder.localhost"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://builder.localhost/*"
       },
-      "defaultClientScopes": ["basic", "roles", "profile", "email"],
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "profile",
+        "email"
+      ],
       "protocolMappers": [
         {
           "name": "audience",
@@ -128,6 +225,18 @@
           "config": {
             "included.client.audience": "agentplane",
             "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
           }
         }
       ]
@@ -141,5 +250,7 @@
       "standardFlowEnabled": false
     }
   ],
-  "defaultRoles": ["user"]
+  "defaultRoles": [
+    "user"
+  ]
 }

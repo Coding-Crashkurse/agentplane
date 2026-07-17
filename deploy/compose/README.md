@@ -90,6 +90,30 @@ Switching: `docker compose --profile langfuse down`, then bring the stack up
 with the other profile. Without any profile the platform still runs, but no
 collector exists and trace exports fail quietly (logged by the SDKs).
 
+## Guard-rails (CORS, rate limits, quotas)
+
+Two protection layers ship on the base stack:
+
+- **Per-owner deployment quota (runtime).**
+  `AGENTPLANE_RUNTIME_MAX_DEPLOYMENTS_PER_OWNER` caps how many non-ephemeral
+  definitions one owner may keep deployed at once. The base file sets it to
+  `25`; `0` means unlimited. Redeploying or rolling back an already-deployed
+  definition does not consume a new slot, undeploying frees one, and `admin`
+  callers bypass the cap. A deploy over the limit returns `429` with a
+  `{"detail": {"error": "deployment_quota_exceeded", ...}}` body (SPEC §7.2).
+  Ephemeral playground deploys never count against it.
+
+- **Gateway CORS + rate limiting (agentgateway).**
+  `agentgateway/config.yaml` puts a `cors` policy on every browser-facing route
+  (`/a2a/*`, `/mcp/*`, `/registry/*`, `/runtime/*`) scoped to the SPA origins
+  `http://app.localhost` and `http://builder.localhost`; the SDK/CLI and the
+  registry health job are not browsers and are unaffected. `/a2a` and `/mcp`
+  additionally carry a `localRateLimit` token bucket (~60 requests/minute,
+  state per gateway instance) as a coarse abuse guard. Both policies are
+  validated against the agentgateway 0.8.2 route-policy schema. For prod, widen
+  the `cors.allowOrigins` to your public app/builder domains when you copy the
+  config (see below).
+
 ## Production overlay
 
 ```bash
@@ -115,10 +139,13 @@ OIDC issuers at `https://$AUTH_DOMAIN/realms/agentplane`, and sets
   (`!PathPrefix(`/v1`)`) — do not loosen that rule; the OpenAI-compatible LLM
   egress must only be reachable by the runtime inside the network.
 - **agentgateway config:** `agentgateway/config.yaml` pins the expected `iss`
-  claim to `http://auth.localhost/realms/agentplane`. For prod, copy it,
-  change the two `issuer` values to `https://$AUTH_DOMAIN/realms/agentplane`,
-  and mount the copy over `/etc/agentgateway/config.yaml` (the JWKS URL keeps
-  pointing at the internal `keycloak:8080` — it never leaves the network).
+  claim to `http://auth.localhost/realms/agentplane` and scopes CORS to the
+  `*.localhost` SPA origins. For prod, copy it, change the two `issuer` values
+  to `https://$AUTH_DOMAIN/realms/agentplane`, replace the `cors.allowOrigins`
+  entries with your public app/builder domains (`https://$APP_DOMAIN`,
+  `https://$BUILDER_DOMAIN`), and mount the copy over
+  `/etc/agentgateway/config.yaml` (the JWKS URL keeps pointing at the internal
+  `keycloak:8080` — it never leaves the network).
 - **UI config:** `ui/config.json` contains the `*.localhost` URLs; provide a
   prod copy with the public domains and mount it over `/srv/config.json`.
 - **`REGISTRY_ALLOW_PRIVATE_URLS` stays `false`** (the overlay sets it

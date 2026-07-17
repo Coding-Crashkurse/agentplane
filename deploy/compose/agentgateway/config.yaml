@@ -8,6 +8,13 @@
 # (KC_HOSTNAME=auth.localhost) mints. The JWKS is fetched from the keycloak
 # service directly: agentgateway's resolver hardcodes *.localhost to loopback
 # (RFC 6761), so the traefik network alias is not reachable from here.
+#
+# Browser hardening (SPEC §7.3): every browser-facing route carries a `cors`
+# policy scoped to the SPA origins (the SDK/CLI and the health job are not
+# browsers and are unaffected). /a2a and /mcp additionally carry a
+# `localRateLimit` token bucket (~60 requests/minute) as a coarse abuse guard;
+# state is per gateway instance. Both `cors` and `localRateLimit` are validated
+# against the 0.8.2 route-policy schema.
 config:
   tracing:
     otlpEndpoint: http://otel-collector:4318
@@ -25,6 +32,22 @@ binds:
                   pathPrefix: /a2a/
             policies:
               a2a: {}
+              cors:
+                allowOrigins:
+                  - http://app.localhost
+                  - http://builder.localhost
+                allowHeaders:
+                  - authorization
+                  - content-type
+                  - a2a-version
+                  - traceparent
+                  - mcp-protocol-version
+                allowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+              localRateLimit:
+                - type: requests
+                  maxTokens: 60
+                  tokensPerFill: 60
+                  fillInterval: 60s
               jwtAuth:
                 issuer: http://auth.localhost/realms/agentplane
                 audiences: [agentplane]
@@ -39,6 +62,22 @@ binds:
               - path:
                   pathPrefix: /mcp/
             policies:
+              cors:
+                allowOrigins:
+                  - http://app.localhost
+                  - http://builder.localhost
+                allowHeaders:
+                  - authorization
+                  - content-type
+                  - a2a-version
+                  - traceparent
+                  - mcp-protocol-version
+                allowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+              localRateLimit:
+                - type: requests
+                  maxTokens: 60
+                  tokensPerFill: 60
+                  fillInterval: 60s
               jwtAuth:
                 issuer: http://auth.localhost/realms/agentplane
                 audiences: [agentplane]
@@ -53,6 +92,17 @@ binds:
               - path:
                   pathPrefix: /runtime/
             policies:
+              cors:
+                allowOrigins:
+                  - http://app.localhost
+                  - http://builder.localhost
+                allowHeaders:
+                  - authorization
+                  - content-type
+                  - a2a-version
+                  - traceparent
+                  - mcp-protocol-version
+                allowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
               urlRewrite:
                 path:
                   prefix: ""
@@ -63,6 +113,17 @@ binds:
               - path:
                   pathPrefix: /registry/
             policies:
+              cors:
+                allowOrigins:
+                  - http://app.localhost
+                  - http://builder.localhost
+                allowHeaders:
+                  - authorization
+                  - content-type
+                  - a2a-version
+                  - traceparent
+                  - mcp-protocol-version
+                allowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
               urlRewrite:
                 path:
                   prefix: ""

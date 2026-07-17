@@ -151,6 +151,9 @@ services:
       AGENTPLANE_RUNTIME_AUTH_MODE: oidc
       AGENTPLANE_RUNTIME_OIDC_ISSUER: http://auth.localhost/realms/agentplane
       AGENTPLANE_RUNTIME_OIDC_AUDIENCE: agentplane
+      # SaaS guard-rail: cap concurrently-deployed definitions per owner
+      # (0 = unlimited; admins bypass). See deploy/compose/README.md.
+      AGENTPLANE_RUNTIME_MAX_DEPLOYMENTS_PER_OWNER: "25"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       postgres:
@@ -165,6 +168,11 @@ services:
     image: ghcr.io/coding-crashkurse/agentplane-ui:latest
     build:
       context: ../../../agentplane-ui
+    environment:
+      # Same-origin proxy target for the /admin/users page: the browser calls
+      # app.localhost/kc-admin/* (config.json adminApiUrl), Caddy forwards here.
+      # Avoids cross-origin calls to Keycloak's Admin REST API entirely.
+      KC_ADMIN_UPSTREAM: http://keycloak:8080
     volumes:
       - ./ui/config.json:/srv/config.json:ro
     depends_on:
