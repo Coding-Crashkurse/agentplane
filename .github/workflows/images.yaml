@@ -36,11 +36,17 @@ jobs:
       - name: compute tags
         run: |
           IMG="ghcr.io/coding-crashkurse/${{ matrix.name }}"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "TAGS=${IMG}:${GITHUB_REF_NAME#v}"$'\n'"${IMG}:latest" >> "$GITHUB_ENV"
-          else
-            echo "TAGS=${IMG}:latest"$'\n'"${IMG}:sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          fi
+          {
+            echo "TAGS<<EOF"
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              echo "${IMG}:${GITHUB_REF_NAME#v}"
+              echo "${IMG}:latest"
+            else
+              echo "${IMG}:latest"
+              echo "${IMG}:sha-${GITHUB_SHA::7}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
