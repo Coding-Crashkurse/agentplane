@@ -313,6 +313,78 @@
       "title": "McpToolNodeConfig",
       "type": "object"
     },
+    "RerankNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/RerankNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "rerank",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "RerankNode",
+      "type": "object"
+    },
+    "RerankNodeConfig": {
+      "additionalProperties": false,
+      "description": "Reorder retrieved documents by relevance to the query (v1.1).\n\nThe retrieval node returns a similarity top-k; a reranker (cross-encoder)\nthen scores each document against the query directly and keeps the best\n``top_n`` \u2014 the standard quality step between retrieval and the LLM. Reuses\na ``model_provider`` resource whose ``base_url`` serves a ``/rerank``\nendpoint (Cohere/Jina/TEI-style); no new resource kind.",
+      "properties": {
+        "min_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rerank score threshold; documents scoring below it are dropped, so a reranked set can be empty (which lets an empty-result router branch fire). Score scale is the reranker's own relevance score, not the retrieval metric.",
+          "title": "Min Score"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "resource": {
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "top_n": {
+          "default": 4,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Top N",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "resource"
+      ],
+      "title": "RerankNodeConfig",
+      "type": "object"
+    },
     "RetrievalNode": {
       "additionalProperties": false,
       "properties": {
@@ -631,6 +703,7 @@
             "end": "#/$defs/EndNode",
             "llm_call": "#/$defs/LlmCallNode",
             "mcp_tool": "#/$defs/McpToolNode",
+            "rerank": "#/$defs/RerankNode",
             "retrieval": "#/$defs/RetrievalNode",
             "router": "#/$defs/RouterNode",
             "start": "#/$defs/StartNode",
@@ -653,6 +726,9 @@
           },
           {
             "$ref": "#/$defs/RetrievalNode"
+          },
+          {
+            "$ref": "#/$defs/RerankNode"
           },
           {
             "$ref": "#/$defs/RouterNode"

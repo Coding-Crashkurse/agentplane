@@ -1,0 +1,61 @@
+# RAG with a rerank step (v1.1): retrieval over-fetches candidates, the rerank
+# node reorders them by relevance to the query, and the LLM answers from the
+# top ones. Exposed as an A2A agent.
+schema_version: 1
+name: rag-with-rerank
+display_name: "RAG with reranking"
+description: "Retrieve, rerank by relevance, then answer from the best documents"
+tags: [support, rag, rerank]
+expose:
+  kind: a2a
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          query:
+            type: string
+        required: [query]
+  - id: retrieve_1
+    type: retrieval
+    version: 1
+    config:
+      resource: kb-support
+      collection: support_docs
+      top_k: 20
+  - id: rerank_1
+    type: rerank
+    version: 1
+    config:
+      resource: reranker
+      model: rerank-english-v3.0
+      top_n: 4
+  - id: call_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      model: gpt-5-mini
+      prompt: "Answer using: {documents}\n\nQuestion: {query}"
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: call_1.text
+edges:
+  - { from: start_1.query, to: retrieve_1.query }
+  - { from: start_1.query, to: rerank_1.query }
+  - { from: start_1.query, to: call_1.query }
+  - { from: retrieve_1.documents, to: rerank_1.documents }
+  - { from: rerank_1.documents, to: call_1.documents }
+  - { from: call_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 80, y: 300 }
+    retrieve_1: { x: 320, y: 200 }
+    rerank_1: { x: 540, y: 200 }
+    call_1: { x: 760, y: 300 }
+    end_1: { x: 1000, y: 300 }

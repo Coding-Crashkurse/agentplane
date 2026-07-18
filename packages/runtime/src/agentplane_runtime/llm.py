@@ -130,5 +130,30 @@ class OpenAICompatibleClient:
             raise LlmError(f"malformed embeddings response: {exc}") from exc
         return [float(v) for v in vector]
 
+    async def rerank(
+        self, model: str, query: str, documents: list[str], top_n: int
+    ) -> list[tuple[int, float]]:
+        """Rerank documents by relevance via a ``/rerank`` endpoint.
+
+        Returns ``(original_index, score)`` pairs, best first — the Cohere/Jina/
+        TEI response shape (``results: [{index, relevance_score}]``).
+        """
+        body = {"model": model, "query": query, "documents": documents, "top_n": top_n}
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                f"{self._base_url}/rerank", json=body, headers=self._headers()
+            )
+        if response.status_code != httpx.codes.OK:
+            raise LlmError(f"rerank failed: HTTP {response.status_code}")
+        try:
+            results = response.json()["results"]
+        except (KeyError, ValueError) as exc:
+            raise LlmError(f"malformed rerank response: {exc}") from exc
+        ranked: list[tuple[int, float]] = []
+        for item in results:
+            score = item.get("relevance_score", item.get("score", 0.0))
+            ranked.append((int(item["index"]), float(score)))
+        return ranked
+
 
 __all__ = ["LlmError", "OpenAICompatibleClient"]

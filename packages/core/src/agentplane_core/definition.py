@@ -32,6 +32,7 @@ NODE_CATALOG: frozenset[tuple[str, int]] = frozenset(
         # v1.1 additions
         ("router", 1),
         ("template", 1),
+        ("rerank", 1),
     }
 )
 
@@ -134,6 +135,31 @@ class RetrievalNodeConfig(_StrictModel):
     )
 
 
+class RerankNodeConfig(_StrictModel):
+    """Reorder retrieved documents by relevance to the query (v1.1).
+
+    The retrieval node returns a similarity top-k; a reranker (cross-encoder)
+    then scores each document against the query directly and keeps the best
+    ``top_n`` — the standard quality step between retrieval and the LLM. Reuses
+    a ``model_provider`` resource whose ``base_url`` serves a ``/rerank``
+    endpoint (Cohere/Jina/TEI-style); no new resource kind.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    resource: Slug
+    model: str = ""
+    top_n: int = Field(default=4, ge=1, le=100)
+    min_score: float | None = Field(
+        default=None,
+        description=(
+            "Rerank score threshold; documents scoring below it are dropped, so a "
+            "reranked set can be empty (which lets an empty-result router branch fire). "
+            "Score scale is the reranker's own relevance score, not the retrieval metric."
+        ),
+    )
+
+
 RouterInputType = Literal["text", "json", "documents"]
 
 
@@ -205,6 +231,11 @@ class RetrievalNode(_NodeBase):
     config: RetrievalNodeConfig
 
 
+class RerankNode(_NodeBase):
+    type: Literal["rerank"]
+    config: RerankNodeConfig
+
+
 class RouterNode(_NodeBase):
     type: Literal["router"]
     config: RouterNodeConfig
@@ -216,7 +247,14 @@ class TemplateNode(_NodeBase):
 
 
 Node = Annotated[
-    StartNode | EndNode | LlmCallNode | McpToolNode | RetrievalNode | RouterNode | TemplateNode,
+    StartNode
+    | EndNode
+    | LlmCallNode
+    | McpToolNode
+    | RetrievalNode
+    | RerankNode
+    | RouterNode
+    | TemplateNode,
     Field(discriminator="type"),
 ]
 
@@ -340,6 +378,8 @@ def output_ports(node: Node) -> dict[str, PortType]:  # noqa: PLR0911 - one retu
             return {"result": "json"}
         case RetrievalNode():
             return {"documents": "documents"}
+        case RerankNode():
+            return {"documents": "documents"}
         case RouterNode():
             branches: dict[str, PortType] = {
                 rule.branch: node.config.input_type for rule in node.config.rules
@@ -366,6 +406,8 @@ def input_ports(node: Node) -> dict[str, PortType]:  # noqa: PLR0911 - one retur
             return dict.fromkeys(node.config.args, "json")
         case RetrievalNode():
             return {"query": "text"}
+        case RerankNode():
+            return {"query": "text", "documents": "documents"}
         case RouterNode():
             return {"input": node.config.input_type}
         case TemplateNode():
@@ -423,6 +465,8 @@ __all__ = [
     "McpToolNode",
     "McpToolNodeConfig",
     "Node",
+    "RerankNode",
+    "RerankNodeConfig",
     "RetrievalNode",
     "RetrievalNodeConfig",
     "RouterInputType",

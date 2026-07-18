@@ -17,6 +17,7 @@ from agentplane_core import (
     FlowDefinition,
     LlmCallNode,
     McpToolNode,
+    RerankNode,
     Resource,
     RetrievalNode,
     SecretsProvider,
@@ -256,7 +257,7 @@ class ResourceService:
 def _references(defn: FlowDefinition, resource_name: str) -> bool:
     for node in defn.nodes:
         match node:
-            case LlmCallNode() | RetrievalNode():
+            case LlmCallNode() | RetrievalNode() | RerankNode():
                 if node.config.resource == resource_name:
                     return True
             case McpToolNode():

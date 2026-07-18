@@ -15,6 +15,7 @@ from agentplane_core import (
     FlowDefinition,
     LlmCallNode,
     McpToolNode,
+    RerankNode,
     RetrievalNode,
     ValidationIssue,
     ValidationResult,
@@ -28,6 +29,7 @@ _EXPECTED_KINDS = {
     "llm_call": frozenset({"model_provider"}),
     "retrieval": VECTOR_DB_KINDS,
     "mcp_tool": frozenset({"mcp_server"}),
+    "rerank": frozenset({"model_provider"}),
 }
 
 
@@ -57,7 +59,7 @@ async def validate_full(
                     f"node version {node.version} of {node.type!r} is deprecated",
                 )
             )
-        if not isinstance(node, LlmCallNode | RetrievalNode | McpToolNode):
+        if not isinstance(node, LlmCallNode | RetrievalNode | McpToolNode | RerankNode):
             continue
         resource_name = node.config.resource
         if resource_name is None:  # mcp_tool with direct url

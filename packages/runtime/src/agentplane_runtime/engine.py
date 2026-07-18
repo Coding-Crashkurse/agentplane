@@ -25,6 +25,7 @@ from agentplane_core import (
     McpToolNode,
     ModelProviderResource,
     Node,
+    RerankNode,
     RetrievalNode,
     RouterNode,
     RouterNodeConfig,
@@ -239,6 +240,8 @@ class FlowRunner:
                 return await self._run_llm(node, inputs)
             case RetrievalNode():
                 return await self._run_retrieval(node, inputs)
+            case RerankNode():
+                return await self._run_rerank(node, inputs)
             case McpToolNode():
                 return await self._run_mcp_tool(node, inputs)
             case RouterNode():
@@ -339,6 +342,34 @@ class FlowRunner:
             min_score=config.min_score,
         )
         return {f"{node.id}.documents": documents}
+
+    async def _run_rerank(
+        self, node: RerankNode, inputs: dict[str, PortValue]
+    ) -> dict[str, PortValue]:
+        config = node.config
+        query = _as_text(inputs.get("query", ""))
+        docs_value = inputs.get("documents")
+        documents = (
+            [d for d in docs_value if isinstance(d, Document)]
+            if isinstance(docs_value, list)
+            else []
+        )
+        if not documents:
+            return {f"{node.id}.documents": []}
+        client, default_model = await self._llm_client(config.resource)
+        model = config.model or default_model
+        if not model:
+            raise FlowError(f"node {node.id!r}: no rerank model configured")
+        ranked = await client.rerank(model, query, [doc.text for doc in documents], config.top_n)
+        reranked: list[Document] = []
+        for index, score in ranked:
+            if not 0 <= index < len(documents):
+                continue
+            if config.min_score is not None and score < config.min_score:
+                continue
+            original = documents[index]
+            reranked.append(Document(text=original.text, score=score, metadata=original.metadata))
+        return {f"{node.id}.documents": reranked[: config.top_n]}
 
     async def _run_mcp_tool(
         self, node: McpToolNode, inputs: dict[str, PortValue]
