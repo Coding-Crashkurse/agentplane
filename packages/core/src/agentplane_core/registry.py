@@ -98,6 +98,10 @@ class RegistryEntry(_CardCarrier):
     ``url`` is the gateway URL — the registry never stores internal URLs.
     """
 
+    # Response envelope: tolerate fields a newer server adds, so an older SDK
+    # client (e.g. a builder pinned to a previous release) never breaks parsing.
+    model_config = ConfigDict(extra="ignore", populate_by_name=True, arbitrary_types_allowed=True)
+
     id: UUID
     kind: EntryKind
     card: Card
@@ -194,7 +198,9 @@ class SearchQuery(BaseModel):
 class Capabilities(BaseModel):
     """Registry feature discovery (``GET /capabilities``)."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Response envelope: forward-compatible, so new capability flags don't break
+    # older clients (see RegistryEntry).
+    model_config = ConfigDict(extra="ignore")
 
     semantic_search: bool
     auth: AuthMode
@@ -230,7 +236,9 @@ DefinitionStatus = Literal["draft", "deployed", "undeployed"]
 class DefinitionInfo(BaseModel):
     """Summary of a named definition owned by the runtime (SPEC §6.1)."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Response envelope: forward-compatible (see RegistryEntry). owner/group were
+    # added after 0.0.2 — extra="forbid" here broke SDK clients pinned to 0.0.2.
+    model_config = ConfigDict(extra="ignore")
 
     name: Slug
     display_name: str = ""
@@ -257,7 +265,8 @@ class DeploymentInfo(BaseModel):
     semantic version for the same snapshot — it labels, it does not identify.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # Response envelope: forward-compatible (see RegistryEntry).
+    model_config = ConfigDict(extra="ignore")
 
     name: Slug
     version: int
