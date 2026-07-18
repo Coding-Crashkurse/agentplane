@@ -411,8 +411,9 @@ class EndpointGuard:
             await response(scope, receive, send)
             return
         # Attribute the trace to the caller (SPEC §12): `user.id` is the OTel
-        # convention Langfuse maps to the trace's user.
-        trace.get_current_span().set_attribute("user.id", principal.sub)
+        # convention Langfuse maps to the trace's user. The username reads
+        # better in tracing UIs; the subject is the fallback identity.
+        trace.get_current_span().set_attribute("user.id", principal.username or principal.sub)
         # Expose the caller to the a2a app (SPEC §6.5): the task store scopes
         # persisted conversations by this user (StarletteUser reads
         # display_name).

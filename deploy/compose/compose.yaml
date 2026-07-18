@@ -168,6 +168,9 @@ services:
       # Persist A2A tasks in the runtime DB (Postgres here) so chat
       # conversations survive restarts and are restorable via ListTasks.
       AGENTPLANE_RUNTIME_TASK_STORE: database
+      # Tracing is for chat content (question, answer, latency, tokens) —
+      # the a2a-sdk's internal event-queue spans are noise (official switch).
+      OTEL_INSTRUMENTATION_A2A_SDK_ENABLED: "false"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       postgres:

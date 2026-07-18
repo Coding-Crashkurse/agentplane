@@ -399,16 +399,39 @@ class FlowRunner:
             attributes={
                 "flow.name": self._context.flow_name,
                 "flow.version": self._context.flow_version,
+                # What was asked / answered, in OpenInference terms (tracing
+                # UIs map input.value/output.value to observation input/output).
+                "input.value": _trace_preview(start_values),
                 **trace_attributes,
             },
-        ):
+        ) as span:
             graph = self._graph
             empty: set[str] = set()
             result = await graph.ainvoke(  # type: ignore[attr-defined]
                 {"values": seeded, "executed": empty}
             )
-        values: dict[str, PortValue] = result["values"]
-        return values.get(f"{end.id}.output")
+            values: dict[str, PortValue] = result["values"]
+            output = values.get(f"{end.id}.output")
+            if output is not None:
+                span.set_attribute("output.value", _trace_preview(output))
+        return output
+
+
+_TRACE_PREVIEW_MAX = 4000
+
+
+def _trace_preview(value: object) -> str:
+    """Span-attribute rendering of an input/output value, length-capped.
+
+    A single-string input object (the common chat case) renders as the bare
+    text; everything else as compact JSON.
+    """
+    if isinstance(value, dict) and len(value) == 1:
+        only = next(iter(value.values()))
+        if isinstance(only, str):
+            value = only
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    return text[:_TRACE_PREVIEW_MAX]
 
 
 def _is_empty(value: PortValue | None) -> bool:
