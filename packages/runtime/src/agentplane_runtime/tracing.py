@@ -10,7 +10,7 @@ import os
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
-from opentelemetry import trace
+from opentelemetry import propagate, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -35,8 +35,13 @@ def setup_tracing(app: FastAPI, *, service_name: str) -> None:
     async def _trace_requests(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        # Continue the caller's trace (SPEC §12): the gateway forwards the
+        # browser's traceparent; without extraction every service would start
+        # its own disconnected trace and the chat's trace link would miss the
+        # flow and LLM spans.
         with tracer.start_as_current_span(
             f"{request.method} {request.url.path}",
+            context=propagate.extract(dict(request.headers)),
             attributes={
                 "http.request.method": request.method,
                 "url.path": request.url.path,

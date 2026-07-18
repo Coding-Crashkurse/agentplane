@@ -33,6 +33,7 @@ from a2a.types import (
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools import Tool, ToolResult
+from opentelemetry import trace
 from pydantic import PrivateAttr
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.applications import Starlette
@@ -132,6 +133,10 @@ class FlowAgentExecutor(AgentExecutor):
                     history=[context.message] if context.message is not None else None,
                 )
             )
+        # The A2A context is the conversation: expose it as the OTel session id
+        # so tracing UIs group a user's exchanges (SPEC §12).
+        if context_id:
+            trace.get_current_span().set_attribute("session.id", context_id)
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
 
@@ -144,7 +149,11 @@ class FlowAgentExecutor(AgentExecutor):
         runner = self._runner_factory()
         try:
             inputs = bind_message_to_inputs(self._defn, context.get_user_input())
-            result = await runner.execute(inputs, stream=stream_chunk)
+            result = await runner.execute(
+                inputs,
+                stream=stream_chunk,
+                trace_attributes={"session.id": context_id} if context_id else None,
+            )
         except ValueError as exc:
             await updater.failed(updater.new_agent_message([Part(text=str(exc))]))
             return
@@ -332,6 +341,9 @@ class EndpointGuard:
             )
             await response(scope, receive, send)
             return
+        # Attribute the trace to the caller (SPEC §12): `user.id` is the OTel
+        # convention Langfuse maps to the trace's user.
+        trace.get_current_span().set_attribute("user.id", principal.sub)
         await self._app(scope, receive, send)
 
 

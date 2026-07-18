@@ -13,6 +13,19 @@ receivers:
 
 processors:
   batch: {}
+  # Same noise filter as the langfuse collector: tracing is for user-facing
+  # LLM activity; health probes, preflights, discovery GETs and management
+  # polling are dropped centrally.
+  filter/noise:
+    error_mode: ignore
+    traces:
+      span:
+        - 'IsMatch(name, ".*\.well-known/agent-card\.json.*")'
+        - 'IsMatch(name, ".*/(healthz|readyz)$")'
+        - 'IsMatch(name, "^OPTIONS .*")'
+        - 'IsMatch(name, "^GET /a2a/.*")'
+        - 'IsMatch(name, "^GET /mcp/.*")'
+        - 'IsMatch(name, "^(GET|POST|PUT|PATCH|DELETE) /(api/v1|registry|runtime)/.*")'
 
 exporters:
   otlp_http/mlflow:
@@ -24,5 +37,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [filter/noise, batch]
       exporters: [otlp_http/mlflow]

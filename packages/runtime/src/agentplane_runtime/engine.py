@@ -5,7 +5,7 @@ graph once (cached); every node execution is one OTel span.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from operator import or_
@@ -348,16 +348,26 @@ class FlowRunner:
         return {f"{node.id}.result": _tool_result_to_json(result)}
 
     async def execute(
-        self, start_values: JsonObject, *, stream: StreamCallback | None = None
+        self,
+        start_values: JsonObject,
+        *,
+        stream: StreamCallback | None = None,
+        trace_attributes: Mapping[str, str] | None = None,
     ) -> PortValue:
-        """Run the flow; returns the value of the end node's output."""
+        """Run the flow; returns the value of the end node's output.
+
+        ``trace_attributes`` are added to the flow span — the caller's user
+        and conversation attribution (`user.id`, `session.id`, SPEC §12).
+        """
         token = _stream_var.set(stream)
         try:
-            return await self._execute(start_values)
+            return await self._execute(start_values, trace_attributes or {})
         finally:
             _stream_var.reset(token)
 
-    async def _execute(self, start_values: JsonObject) -> PortValue:
+    async def _execute(
+        self, start_values: JsonObject, trace_attributes: Mapping[str, str]
+    ) -> PortValue:
         start = next(n for n in self._defn.nodes if isinstance(n, StartNode))
         end = next(n for n in self._defn.nodes if isinstance(n, EndNode))
         seeded: dict[str, PortValue] = {
@@ -368,6 +378,7 @@ class FlowRunner:
             attributes={
                 "flow.name": self._context.flow_name,
                 "flow.version": self._context.flow_version,
+                **trace_attributes,
             },
         ):
             graph = self._graph

@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator
 
 import httpx
+from opentelemetry import propagate
 
 from agentplane_core import JsonSchema
 
@@ -24,6 +25,9 @@ class OpenAICompatibleClient:
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
+        # Propagate the active trace (SPEC §12): the gateway continues the
+        # incoming traceparent, so LLM spans (token usage) join the flow trace.
+        propagate.inject(headers)
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
