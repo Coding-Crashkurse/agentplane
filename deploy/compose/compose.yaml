@@ -272,6 +272,14 @@ services:
       AUTH_KEYCLOAK_CLIENT_SECRET: langfuse-client-secret
       AUTH_KEYCLOAK_ISSUER: http://auth.localhost/realms/agentplane
       AUTH_KEYCLOAK_ALLOW_ACCOUNT_LINKING: "true"
+      # Traces are admin-only: the langfuse client's browser flow in Keycloak
+      # denies everyone without the admin role ("langfuse browser" flow, part
+      # of the realm import). Whoever gets through lands in the agentplane org
+      # automatically (viewer), so admin SSO works without manual invites.
+      # SSO-only: no email/password login surface on langfuse itself.
+      LANGFUSE_DEFAULT_ORG_ID: agentplane
+      LANGFUSE_DEFAULT_ORG_ROLE: VIEWER
+      AUTH_DISABLE_USERNAME_PASSWORD: "true"
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: clickhouse

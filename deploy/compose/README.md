@@ -27,7 +27,7 @@ and `../langgraph_a2a` until CI-published images exist.
 | http://builder.localhost | agent builder | demo-admin or demo-builder |
 | http://api.localhost | agentgateway (A2A/MCP/registry/runtime APIs) | JWT |
 | http://auth.localhost | Keycloak | `admin` / `admin` (bootstrap) |
-| http://langfuse.localhost | Langfuse (profile `langfuse`) | `admin@example.com` / `admin12345` |
+| http://langfuse.localhost | Langfuse (profile `langfuse`) | SSO via Keycloak, **admins only** (e.g. `demo-admin`); non-admins are denied at Keycloak, password login is disabled |
 | http://mlflow.localhost | MLflow (profile `mlflow`) | none |
 
 Demo users (realm `agentplane`):

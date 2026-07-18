@@ -278,10 +278,130 @@
         "profile",
         "email",
         "web-origins"
-      ]
+      ],
+      "authenticationFlowBindingOverrides": {
+        "browser": "f339fca2-52b2-4f38-a075-e29417079dad"
+      }
     }
   ],
   "defaultRoles": [
     "user"
+  ],
+  "authenticationFlows": [
+    {
+      "id": "f339fca2-52b2-4f38-a075-e29417079dad",
+      "alias": "langfuse browser",
+      "description": "Browser flow for the langfuse client: platform admins only",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": true,
+          "flowAlias": "langfuse authenticate",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorFlow": true,
+          "flowAlias": "langfuse admin gate",
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "a11a5e0e-1f6e-4c3a-9a67-2b9f1c6b1004",
+      "alias": "langfuse authenticate",
+      "description": "cookie / password alternatives",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "identity-provider-redirector",
+          "authenticatorFlow": false,
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticatorFlow": true,
+          "flowAlias": "langfuse forms",
+          "requirement": "ALTERNATIVE",
+          "priority": 30,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "a11a5e0e-1f6e-4c3a-9a67-2b9f1c6b1000",
+      "alias": "langfuse forms",
+      "description": "username/password",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "id": "a11a5e0e-1f6e-4c3a-9a67-2b9f1c6b1001",
+      "alias": "langfuse admin gate",
+      "description": "deny access unless the user has the admin role",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-role",
+          "authenticatorConfig": "langfuse-admin-role-condition",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "deny-access-authenticator",
+          "authenticatorConfig": "langfuse-deny-message",
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "id": "a11a5e0e-1f6e-4c3a-9a67-2b9f1c6b1002",
+      "alias": "langfuse-admin-role-condition",
+      "config": {
+        "condUserRole": "admin",
+        "negate": "true"
+      }
+    },
+    {
+      "id": "a11a5e0e-1f6e-4c3a-9a67-2b9f1c6b1003",
+      "alias": "langfuse-deny-message",
+      "config": {
+        "denyErrorMessage": "Traces are restricted to administrators."
+      }
+    }
   ]
 }
