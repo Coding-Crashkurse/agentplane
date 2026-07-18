@@ -64,7 +64,11 @@ edges:
   - { from: call_1.text, to: end_1.input }
 ```
 
-Node types v1: `start`, `end`, `llm_call`, `mcp_tool`, `retrieval`.
+Node types: `start`, `end`, `llm_call`, `mcp_tool`, `retrieval`, `router`
+(conditional branches), `template` (text templating). An `llm_call` with
+`history: true` becomes conversational: the runtime feeds the prior turns of
+the caller's A2A conversation (`contextId`) to the model — see
+[`examples/chat-with-history.yaml`](examples/chat-with-history.yaml).
 Credentials never appear in definitions — resources (model providers, vector
 DBs, MCP servers) are referenced **by name** and stored encrypted in the
 runtime. The JSON Schema of the format lives in
@@ -87,7 +91,17 @@ agentplane deploy flow.yaml --version-label 1.2.0    # publish under a semantic 
 # discover via the registry
 export AGENTPLANE_REGISTRY_URL=https://api.example/registry
 agentplane search "support" --semantic
+
+# lifecycle without deleting: disabled entries are hidden from discovery and
+# not health-checked, but stay listed for their owner
+agentplane disable <entry-id>
+agentplane enable <entry-id>
 ```
+
+The registry health-checks every entry (interval configurable), records
+status **transitions** per entry (`GET /agents/{id}/history`, retention
+configurable) and shows owners by display name. Deleting an entry is
+restricted to its owner and admins; team members may edit.
 
 Calling a deployed A2A agent is plain JSON-RPC 2.0 over POST — the binding
 requires the `A2A-Version: 1.0` header, and the card at
@@ -99,6 +113,11 @@ curl -X POST https://api.example/a2a/echo-agent   -H 'A2A-Version: 1.0' -H 'Cont
        "params":{"message":{"messageId":"m1","role":"ROLE_USER",
                             "parts":[{"text":"ping"}]}}}'
 ```
+
+A2A conversations are persistent when the runtime runs with
+`AGENTPLANE_RUNTIME_TASK_STORE=database`: tasks (scoped per endpoint and
+caller) survive restarts, and clients restore chat history via the standard
+A2A `ListTasks`/`GetTask` methods — the portal chat does exactly that.
 
 Same thing from Python:
 
@@ -142,12 +161,20 @@ are otherwise rejected.
 ## Local platform stack
 
 `deploy/compose/` ships a complete stack: traefik, Keycloak (realm import
-with demo users), Postgres, Langfuse, agentgateway, registry and runtime.
+with demo users `demo-admin`/`demo-builder`/`demo-user`), Postgres,
+agentgateway, registry, runtime, the portal UI (chat, registry management)
+and the low-code builder — plus Langfuse behind `--profile langfuse`
+(admin-only via a Keycloak gate; traces are chat-focused: one trace per
+message with user, session, question, answer and token usage).
 
 ```bash
-docker compose -f deploy/compose/compose.yaml up -d --wait
+docker compose -f deploy/compose/compose.yaml --profile langfuse up -d --wait
 ./scripts/smoke.sh    # deploy examples, call them via A2A/MCP, check traces
 ```
+
+Then open http://app.localhost (portal) or http://builder.localhost. A
+production overlay with real domains and ACME TLS is in
+`deploy/compose/compose.prod.yaml`.
 
 ## Development
 
