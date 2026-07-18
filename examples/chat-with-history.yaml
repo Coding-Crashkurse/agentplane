@@ -1,0 +1,47 @@
+# Conversational A2A agent: the LLM sees the prior turns of the caller's
+# conversation (A2A contextId) — `history: true` on the llm_call node.
+schema_version: 1
+name: chat-with-history
+display_name: "Chat With History"
+description: "Conversational assistant that remembers the current conversation"
+tags: [demo, chat]
+expose:
+  kind: a2a
+  examples:
+    - "My name is Ada."
+    - "What is my name?"
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          message:
+            type: string
+        required: [message]
+  - id: call_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      model: ""
+      prompt: "{message}"
+      system_prompt: "You are a helpful assistant. Use the conversation so far when answering."
+      stream: true
+      history: true
+      history_max_turns: 10
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: call_1.text
+edges:
+  - { from: start_1.message, to: call_1.message }
+  - { from: call_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 80, y: 200 }
+    call_1: { x: 320, y: 200 }
+    end_1: { x: 560, y: 200 }

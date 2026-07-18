@@ -5,7 +5,7 @@ graph once (cached); every node execution is one OTel span.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from operator import or_
@@ -55,6 +55,15 @@ class FlowError(RuntimeError):
 # Per-run token stream callback. A ContextVar (not runner state) because the
 # compiled runner is shared across concurrent requests.
 _stream_var: ContextVar[StreamCallback | None] = ContextVar("agentplane_stream", default=None)
+
+# One prior exchange of the caller's conversation: ("user"|"assistant", text).
+ConversationTurn = tuple[str, str]
+
+# Per-run conversation history (prior turns of the A2A context). Same
+# ContextVar reasoning as the stream callback above.
+_conversation_var: ContextVar[tuple[ConversationTurn, ...]] = ContextVar(
+    "agentplane_conversation", default=()
+)
 
 
 class FlowState(TypedDict):
@@ -279,17 +288,24 @@ class FlowRunner:
         if not model:
             raise FlowError(f"node {node.id!r}: no model configured (node or resource default)")
 
+        turns: tuple[ConversationTurn, ...] = ()
+        if config.history:
+            # `history_max_turns` counts exchanges (user + assistant pairs).
+            turns = _conversation_var.get()[-2 * config.history_max_turns :]
+
         stream_cb = _stream_var.get() or self._context.stream
         if config.stream and stream_cb is not None:
             chunks: list[str] = []
             async for delta in client.stream(
-                model, prompt, system_prompt, config.structured_output
+                model, prompt, system_prompt, config.structured_output, turns=turns
             ):
                 chunks.append(delta)
                 await stream_cb(delta)
             text = "".join(chunks)
         else:
-            text = await client.complete(model, prompt, system_prompt, config.structured_output)
+            text = await client.complete(
+                model, prompt, system_prompt, config.structured_output, turns=turns
+            )
 
         outputs: dict[str, PortValue] = {f"{node.id}.text": text}
         if config.structured_output is not None:
@@ -353,16 +369,21 @@ class FlowRunner:
         *,
         stream: StreamCallback | None = None,
         trace_attributes: Mapping[str, str] | None = None,
+        conversation: Sequence[ConversationTurn] | None = None,
     ) -> PortValue:
         """Run the flow; returns the value of the end node's output.
 
         ``trace_attributes`` are added to the flow span — the caller's user
         and conversation attribution (`user.id`, `session.id`, SPEC §12).
+        ``conversation`` is the caller's prior turns; LLM nodes with
+        ``history: true`` prepend them as chat messages.
         """
         token = _stream_var.set(stream)
+        conversation_token = _conversation_var.set(tuple(conversation or ()))
         try:
             return await self._execute(start_values, trace_attributes or {})
         finally:
+            _conversation_var.reset(conversation_token)
             _stream_var.reset(token)
 
     async def _execute(

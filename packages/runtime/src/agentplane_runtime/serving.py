@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from a2a.types import (
     TaskState,
     TaskStatus,
 )
+from a2a.types.a2a_pb2 import ListTasksRequest, Role
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools import Tool, ToolResult
@@ -47,13 +49,16 @@ from starlette.routing import Route
 from agentplane_core import (
     FlowDefinition,
     JsonObject,
+    LlmCallNode,
     StartNode,
     single_required_string_input,
 )
 from agentplane_runtime.auth import AccessScope, Authenticator
-from agentplane_runtime.engine import ExecutionContext, FlowRunner, _as_text
+from agentplane_runtime.engine import ConversationTurn, ExecutionContext, FlowRunner, _as_text
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.settings import EPHEMERAL_TTL_S, RuntimeSettings
+
+logger = logging.getLogger(__name__)
 
 AGENT_CARD_PATH = "/.well-known/agent-card.json"
 
@@ -114,12 +119,59 @@ def bind_message_to_inputs(defn: FlowDefinition, text: str) -> JsonObject:
     return parsed
 
 
+def _wants_history(defn: FlowDefinition) -> bool:
+    return any(isinstance(node, LlmCallNode) and node.config.history for node in defn.nodes)
+
+
+async def _load_conversation(
+    store: TaskStore,
+    context_id: str,
+    current_task_id: str,
+    call_context: ServerCallContext,
+) -> list[ConversationTurn]:
+    """Prior turns of the conversation, oldest first (SPEC §6.5).
+
+    User text comes from each task's history, the reply from its artifacts —
+    the same reconstruction the chat UI uses. The current task (already saved
+    with the incoming message) is excluded.
+    """
+    request = ListTasksRequest(
+        context_id=context_id, page_size=100, history_length=200, include_artifacts=True
+    )
+    response = await store.list(request, call_context)
+    turns: list[ConversationTurn] = []
+    for task in reversed(list(response.tasks)):  # store lists newest first
+        if task.id == current_task_id:
+            continue
+        user_text = "".join(
+            part.text
+            for message in task.history
+            if message.role == Role.ROLE_USER
+            for part in message.parts
+            if part.text
+        )
+        reply_text = "".join(
+            part.text for artifact in task.artifacts for part in artifact.parts if part.text
+        )
+        if user_text:
+            turns.append(("user", user_text))
+        if reply_text:
+            turns.append(("assistant", reply_text))
+    return turns
+
+
 class FlowAgentExecutor(AgentExecutor):
     """Runs the flow for each A2A request; streams tokens for stream:true nodes."""
 
-    def __init__(self, runner_factory: Callable[[], FlowRunner], defn: FlowDefinition) -> None:
+    def __init__(
+        self,
+        runner_factory: Callable[[], FlowRunner],
+        defn: FlowDefinition,
+        task_store: TaskStore | None = None,
+    ) -> None:
         self._runner_factory = runner_factory
         self._defn = defn
+        self._task_store = task_store
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or ""
@@ -149,6 +201,16 @@ class FlowAgentExecutor(AgentExecutor):
                 message=updater.new_agent_message([Part(text=delta)]),
             )
 
+        conversation: list[ConversationTurn] | None = None
+        if self._task_store is not None and context_id and _wants_history(self._defn):
+            try:
+                conversation = await _load_conversation(
+                    self._task_store, context_id, task_id, context.call_context
+                )
+            except Exception:
+                # History is best-effort: a store hiccup must not fail the chat.
+                logger.warning("conversation history unavailable", exc_info=True)
+
         runner = self._runner_factory()
         try:
             inputs = bind_message_to_inputs(self._defn, context.get_user_input())
@@ -156,6 +218,7 @@ class FlowAgentExecutor(AgentExecutor):
                 inputs,
                 stream=stream_chunk,
                 trace_attributes={"session.id": context_id} if context_id else None,
+                conversation=conversation,
             )
         except ValueError as exc:
             await updater.failed(updater.new_agent_message([Part(text=str(exc))]))
@@ -189,9 +252,12 @@ def build_a2a_app(
     in-memory (today's behavior).
     """
     card = build_agent_card(defn, public_url, version)
+    # The executor shares the store so LLM nodes with `history: true` can load
+    # the conversation's prior turns (works for the in-memory store too).
+    store = task_store or InMemoryTaskStore()
     handler = DefaultRequestHandler(
-        agent_executor=FlowAgentExecutor(runner_factory, defn),
-        task_store=task_store or InMemoryTaskStore(),
+        agent_executor=FlowAgentExecutor(runner_factory, defn, task_store=store),
+        task_store=store,
         agent_card=card,
     )
 

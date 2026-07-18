@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import httpx
 from opentelemetry import propagate
@@ -40,10 +40,13 @@ class OpenAICompatibleClient:
         structured_output: JsonSchema | None,
         *,
         stream: bool,
+        turns: Sequence[tuple[str, str]] = (),
     ) -> dict[str, object]:
         messages: list[dict[str, object]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        for role, text in turns:
+            messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": prompt})
         body: dict[str, object] = {"model": model, "messages": messages, "stream": stream}
         if structured_output is not None:
@@ -59,8 +62,11 @@ class OpenAICompatibleClient:
         prompt: str,
         system_prompt: str = "",
         structured_output: JsonSchema | None = None,
+        turns: Sequence[tuple[str, str]] = (),
     ) -> str:
-        body = self._chat_body(model, prompt, system_prompt, structured_output, stream=False)
+        body = self._chat_body(
+            model, prompt, system_prompt, structured_output, stream=False, turns=turns
+        )
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 f"{self._base_url}/chat/completions", json=body, headers=self._headers()
@@ -79,9 +85,12 @@ class OpenAICompatibleClient:
         prompt: str,
         system_prompt: str = "",
         structured_output: JsonSchema | None = None,
+        turns: Sequence[tuple[str, str]] = (),
     ) -> AsyncIterator[str]:
         """Yield content deltas from an SSE chat-completions stream."""
-        body = self._chat_body(model, prompt, system_prompt, structured_output, stream=True)
+        body = self._chat_body(
+            model, prompt, system_prompt, structured_output, stream=True, turns=turns
+        )
         async with (
             httpx.AsyncClient(timeout=self._timeout) as client,
             client.stream(

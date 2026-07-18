@@ -88,6 +88,21 @@ class LlmCallNodeConfig(_StrictModel):
     system_prompt: str = ""
     structured_output: JsonSchema | None = None
     stream: bool = False
+    history: bool = Field(
+        default=False,
+        description=(
+            "Prepend the conversation history as chat messages. The history is "
+            "the prior turns of the caller's conversation (A2A contextId), "
+            "loaded by the runtime from its task store; with history disabled "
+            "or no persistence the node sees only the current prompt."
+        ),
+    )
+    history_max_turns: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Cap on prior exchanges (user + assistant pairs) fed to the model.",
+    )
 
 
 class McpToolNodeConfig(_StrictModel):

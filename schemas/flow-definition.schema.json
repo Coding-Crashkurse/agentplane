@@ -176,6 +176,20 @@
     "LlmCallNodeConfig": {
       "additionalProperties": false,
       "properties": {
+        "history": {
+          "default": false,
+          "description": "Prepend the conversation history as chat messages. The history is the prior turns of the caller's conversation (A2A contextId), loaded by the runtime from its task store; with history disabled or no persistence the node sees only the current prompt.",
+          "title": "History",
+          "type": "boolean"
+        },
+        "history_max_turns": {
+          "default": 20,
+          "description": "Cap on prior exchanges (user + assistant pairs) fed to the model.",
+          "maximum": 200,
+          "minimum": 1,
+          "title": "History Max Turns",
+          "type": "integer"
+        },
         "model": {
           "default": "",
           "title": "Model",
