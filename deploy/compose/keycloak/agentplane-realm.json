@@ -259,7 +259,7 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "redirectUris": [
-        "http://langfuse.localhost/api/auth/callback/custom"
+        "http://langfuse.localhost/api/auth/callback/keycloak"
       ],
       "webOrigins": [
         "http://langfuse.localhost"
