@@ -18,7 +18,7 @@ from agentplane_runtime.definitions import DefinitionService
 from agentplane_runtime.migrate import run_migrations
 from agentplane_runtime.registration import RegistryRegistrar
 from agentplane_runtime.resources import ResourceService
-from agentplane_runtime.secrets import FernetSecretsProvider
+from agentplane_runtime.secrets import make_secrets_provider
 from agentplane_runtime.serving import EndpointManager
 from agentplane_runtime.settings import RUNTIME_VERSION, RuntimeSettings
 from agentplane_runtime.tracing import setup_tracing
@@ -36,7 +36,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
         raise RuntimeError("AGENTPLANE_RUNTIME_SECRET_KEY is required")
 
     db = Database(cfg.db_url)
-    secrets = FernetSecretsProvider(db, cfg.secret_key)
+    secrets = make_secrets_provider(cfg, db)
     resources = ResourceService(db, secrets)
     authenticator = Authenticator(cfg)
     endpoints = EndpointManager(resources, cfg, authenticator, engine=db.engine)

@@ -6,6 +6,7 @@ from cryptography.fernet import Fernet
 
 from agentplane_core import SecretsProvider
 from agentplane_runtime.db import Database, SecretRow
+from agentplane_runtime.settings import RuntimeSettings
 
 
 class SecretNotFoundError(KeyError):
@@ -42,4 +43,20 @@ class FernetSecretsProvider(SecretsProvider):
                 await session.delete(row)
 
 
-__all__ = ["FernetSecretsProvider", "SecretNotFoundError"]
+def make_secrets_provider(settings: RuntimeSettings, db: Database) -> SecretsProvider:
+    """Select the secrets backend by name (SPEC_SAAS §11: pluggable KMS/Vault seam).
+
+    Only ``fernet`` ships in the community package. Enterprise/KMS/Vault backends
+    are optional extras that implement the same :class:`SecretsProvider` and plug
+    in here — the call sites (resource CRUD) never change. This is the extension
+    point, not a licensed feature: at-rest encryption is never paywalled.
+    """
+    backend = settings.secrets_backend
+    if backend == "fernet":
+        if not settings.secret_key:
+            raise RuntimeError("AGENTPLANE_RUNTIME_SECRET_KEY is required for the fernet backend")
+        return FernetSecretsProvider(db, settings.secret_key)
+    raise RuntimeError(f"unknown secrets backend {backend!r}")
+
+
+__all__ = ["FernetSecretsProvider", "SecretNotFoundError", "make_secrets_provider"]

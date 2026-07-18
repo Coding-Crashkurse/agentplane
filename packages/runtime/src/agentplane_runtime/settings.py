@@ -29,6 +29,11 @@ class RuntimeSettings(BaseSettings):
     registry_client_secret: str = ""
     registry_oidc_issuer: str = ""
     secret_key: str = ""  # Fernet key; required for resources with secrets
+    # Pluggable secrets backend (SPEC_SAAS §11): only "fernet" ships here;
+    # enterprise/KMS/Vault backends implement the same SecretsProvider and are
+    # selected by name so call sites never change. Not a licensed feature —
+    # at-rest security is not paywalled.
+    secrets_backend: str = "fernet"
     llm_base_url: str = ""  # gateway's OpenAI-compatible endpoint (resource default)
     auth_mode: Literal["none", "oidc"] = "none"
     oidc_issuer: str = ""
