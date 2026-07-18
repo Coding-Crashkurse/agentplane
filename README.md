@@ -64,8 +64,9 @@ edges:
   - { from: call_1.text, to: end_1.input }
 ```
 
-Node types: `start`, `end`, `llm_call`, `mcp_tool`, `retrieval`, `router`
-(conditional branches), `template` (text templating). An `llm_call` with
+Node types: `start`, `end`, `llm_call`, `mcp_tool`, `retrieval`, `rerank`
+(relevance reranking of retrieved documents), `router` (conditional branches),
+`template` (text templating). An `llm_call` with
 `history: true` becomes conversational: the runtime feeds the prior turns of
 the caller's A2A conversation (`contextId`) to the model — see
 [`examples/chat-with-history.yaml`](examples/chat-with-history.yaml).

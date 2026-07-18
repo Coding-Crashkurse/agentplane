@@ -97,7 +97,7 @@ dev = [
 
 [[package]]
 name = "agentplane-core"
-version = "0.0.5"
+version = "0.0.6"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -162,7 +162,7 @@ provides-extras = ["semantic", "postgres"]
 
 [[package]]
 name = "agentplane-runtime"
-version = "0.0.5"
+version = "0.0.6"
 source = { editable = "packages/runtime" }
 dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },
