@@ -1,13 +1,16 @@
 # agentgateway config (SPEC §7.3): one OpenAI-compatible LLM route, one MCP
 # route, static wildcard routes /a2a/* and /mcp/* -> runtime with the a2a
-# policy (agent-card URL rewriting) and JWT validation against Keycloak.
+# policy (agent-card URL rewriting).
 #
 # Schema: https://github.com/agentgateway/agentgateway/blob/v0.8.2/schema/local.json
-# (verified against the pinned 0.8.2 image). The issuer is the expected `iss`
-# claim — http://auth.localhost/realms/agentplane, matching what Keycloak
-# (KC_HOSTNAME=auth.localhost) mints. The JWKS is fetched from the keycloak
-# service directly: agentgateway's resolver hardcodes *.localhost to loopback
-# (RFC 6761), so the traefik network alias is not reachable from here.
+# (verified against the pinned 0.8.2 image).
+#
+# No gateway-side jwtAuth on /a2a and /mcp: agentgateway 0.8.2 consumes the
+# Authorization header after validating it (verified empirically 2026-07-18,
+# in strict AND permissive mode), so the runtime would receive no token and
+# reject with 401 "missing bearer token". The runtime is the authoritative
+# OIDC validator (issuer + audience, standalone invariant) — end-to-end auth
+# stays enforced, the gateway contributes CORS + rate limiting.
 #
 # Browser hardening (SPEC §7.3): every browser-facing route carries a `cors`
 # policy scoped to the SPA origins (the SDK/CLI and the health job are not
@@ -48,11 +51,6 @@ binds:
                   maxTokens: 60
                   tokensPerFill: 60
                   fillInterval: 60s
-              jwtAuth:
-                issuer: http://auth.localhost/realms/agentplane
-                audiences: [agentplane]
-                jwks:
-                  url: http://keycloak:8080/realms/agentplane/protocol/openid-connect/certs
             backends:
               - host: runtime:8000
 
@@ -78,11 +76,6 @@ binds:
                   maxTokens: 60
                   tokensPerFill: 60
                   fillInterval: 60s
-              jwtAuth:
-                issuer: http://auth.localhost/realms/agentplane
-                audiences: [agentplane]
-                jwks:
-                  url: http://keycloak:8080/realms/agentplane/protocol/openid-connect/certs
             backends:
               - host: runtime:8000
 
