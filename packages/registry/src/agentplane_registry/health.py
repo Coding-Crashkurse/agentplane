@@ -64,9 +64,23 @@ class HealthJob:
         self._settings = settings
         self._failures: dict[str, int] = {}
         self._task: asyncio.Task[None] | None = None
+        self._kicks: set[asyncio.Task[None]] = set()
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop(), name="registry-health-job")
+
+    def kick(self, entry_id: str) -> None:
+        """Immediately fast-check one entry (e.g. just registered/re-enabled).
+
+        Without this, a fresh "starting" entry sits until the next periodic
+        pass picks it up (up to interval + jitter). No-op while the job is
+        not running (health checking disabled, tests).
+        """
+        if self._task is None:
+            return
+        task = asyncio.create_task(self._check_starting(entry_id), name=f"health-kick-{entry_id}")
+        self._kicks.add(task)
+        task.add_done_callback(self._kicks.discard)
 
     async def stop(self) -> None:
         if self._task is not None:

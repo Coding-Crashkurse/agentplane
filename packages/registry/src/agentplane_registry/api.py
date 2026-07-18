@@ -33,6 +33,7 @@ from agentplane_registry.db import (
     record_status_event,
     row_to_entry,
 )
+from agentplane_registry.health import HealthJob
 from agentplane_registry.search import RegistrySearch
 from agentplane_registry.settings import REGISTRY_VERSION, RegistrySettings
 from agentplane_registry.urlcheck import is_private_url
@@ -57,8 +58,14 @@ async def _principal(request: Request) -> Principal:
     return principal
 
 
+def _health_job(request: Request) -> HealthJob | None:
+    job: HealthJob | None = getattr(request.app.state, "health_job", None)
+    return job
+
+
 State = Annotated[RegistryState, Depends(_state)]
 Caller = Annotated[Principal, Depends(_principal)]
+Health = Annotated[HealthJob | None, Depends(_health_job)]
 
 router = APIRouter(prefix="/api/v1")
 health_router = APIRouter()
@@ -93,7 +100,9 @@ def _check_url(url: str, settings: RegistrySettings) -> None:
 
 
 @router.post("/agents", status_code=status.HTTP_201_CREATED, response_model=RegistryEntry)
-async def register_entry(body: RegistryEntryCreate, state: State, caller: Caller) -> RegistryEntry:
+async def register_entry(
+    body: RegistryEntryCreate, state: State, caller: Caller, health: Health
+) -> RegistryEntry:
     _check_url(body.url, state.settings)
     now = datetime.now(UTC)
     owner, group = _attribution(body, caller, state.settings.auth_mode)
@@ -120,6 +129,9 @@ async def register_entry(body: RegistryEntryCreate, state: State, caller: Caller
             detail=f"entry named {body.card.name!r} already exists for this owner",
         ) from None
     entry = row_to_entry(row)
+    if health is not None:
+        # Check the fresh entry immediately instead of waiting for the next pass.
+        health.kick(row.id)
     await state.search.index(entry)
     return entry
 
@@ -234,7 +246,7 @@ def _require_owner(row: EntryRow, caller: Principal, auth_mode: str) -> None:
 
 @router.put("/agents/{entry_id}", response_model=RegistryEntry)
 async def update_entry(
-    entry_id: uuid.UUID, body: RegistryEntryPatch, state: State, caller: Caller
+    entry_id: uuid.UUID, body: RegistryEntryPatch, state: State, caller: Caller, health: Health
 ) -> RegistryEntry:
     row = await _load_visible(entry_id, state, caller)
     _require_owner(row, caller, state.settings.auth_mode)
@@ -260,6 +272,9 @@ async def update_entry(
         fresh.updated_at = datetime.now(UTC)
         row = fresh
     entry = row_to_entry(row)
+    if body.enabled is True and entry.status == "starting" and health is not None:
+        # Re-enabled: check immediately instead of waiting for the next pass.
+        health.kick(str(entry_id))
     await state.search.index(entry)
     return entry
 
