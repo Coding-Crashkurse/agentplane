@@ -244,6 +244,14 @@ def _require_owner(row: EntryRow, caller: Principal, auth_mode: str) -> None:
         )
 
 
+def _require_owner_or_admin(row: EntryRow, caller: Principal, auth_mode: str) -> None:
+    """Deletion is destructive: group members may edit, but not remove (SPEC §5.1)."""
+    scope = AccessScope.for_caller(caller, auth_mode)
+    if scope.unrestricted or row.owner == scope.sub:
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="owner or admin required")
+
+
 @router.put("/agents/{entry_id}", response_model=RegistryEntry)
 async def update_entry(
     entry_id: uuid.UUID, body: RegistryEntryPatch, state: State, caller: Caller, health: Health
@@ -282,7 +290,7 @@ async def update_entry(
 @router.delete("/agents/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_entry(entry_id: uuid.UUID, state: State, caller: Caller) -> None:
     row = await _load_visible(entry_id, state, caller)
-    _require_owner(row, caller, state.settings.auth_mode)
+    _require_owner_or_admin(row, caller, state.settings.auth_mode)
     async with state.db.session() as session, session.begin():
         fresh = await session.get(EntryRow, str(entry_id))
         if fresh is not None:

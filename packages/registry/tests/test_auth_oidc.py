@@ -178,8 +178,17 @@ async def test_teammates_see_and_manage_group_entries(oidc_client: httpx.AsyncCl
         await oidc_client.get("/api/v1/agents/search", params={"q": "pay"}, headers=_auth(teammate))
     ).json()
     assert search["total"] == 1
+    # Teammates may edit, but deletion stays with the owner and admins.
+    updated = await oidc_client.put(
+        f"/api/v1/agents/{entry['id']}", json={"tags": ["pay"]}, headers=_auth(teammate)
+    )
+    assert updated.status_code == 200
     assert (
         await oidc_client.delete(f"/api/v1/agents/{entry['id']}", headers=_auth(teammate))
+    ).status_code == 403
+    owner = make_token("user-x", ["user"])
+    assert (
+        await oidc_client.delete(f"/api/v1/agents/{entry['id']}", headers=_auth(owner))
     ).status_code == 204
 
     # stranger never saw it (and it is gone now anyway)
