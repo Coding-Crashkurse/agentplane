@@ -1,6 +1,6 @@
 [project]
 name = "agentplane-sdk"
-version = "0.0.3"
+version = "0.0.4"
 description = "agentplane typed client + CLI"
 readme = "README.md"
 license = "MIT"

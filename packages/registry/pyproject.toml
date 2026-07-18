@@ -1,6 +1,6 @@
 [project]
 name = "agentplane-registry"
-version = "0.0.3"
+version = "0.0.4"
 description = "agentplane discovery service (standalone-capable)"
 readme = "README.md"
 license = "MIT"
