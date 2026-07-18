@@ -22,7 +22,13 @@ from agentplane_core import (
 from agentplane_core.registry import Card
 from agentplane_runtime.serving import build_agent_card
 from agentplane_runtime.settings import RuntimeSettings
-from agentplane_sdk import AgentplaneError, ConflictError, RegistryClient
+from agentplane_sdk import (
+    AgentplaneError,
+    ConflictError,
+    OidcClientCredentialsProvider,
+    RegistryClient,
+    TokenProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +57,25 @@ class RegistryRegistrar:
     def __init__(self, settings: RuntimeSettings) -> None:
         self._settings = settings
         self._tasks: set[asyncio.Task[None]] = set()
+        self._auth = self._build_auth()
+
+    def _build_auth(self) -> str | TokenProvider | None:
+        """Prefer client-credentials (auto-refreshed) over a static token."""
+        s = self._settings
+        if s.registry_client_id and s.registry_client_secret:
+            return OidcClientCredentialsProvider(
+                s.registry_oidc_issuer or s.oidc_issuer,
+                s.registry_client_id,
+                s.registry_client_secret,
+            )
+        return s.registry_token or None
 
     @property
     def enabled(self) -> bool:
         return bool(self._settings.registry_url)
 
     def _client(self) -> RegistryClient:
-        token = self._settings.registry_token or None
-        return RegistryClient(self._settings.registry_url, token)
+        return RegistryClient(self._settings.registry_url, self._auth)
 
     async def register(
         self,

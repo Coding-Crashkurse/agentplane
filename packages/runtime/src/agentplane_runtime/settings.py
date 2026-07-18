@@ -20,7 +20,14 @@ class RuntimeSettings(BaseSettings):
     db_url: str = "sqlite+aiosqlite:///runtime.db"
     public_base_url: str = ""  # required to serve; validated on app start
     registry_url: str = ""  # required to self-register; empty disables registration
-    registry_token: str = ""
+    registry_token: str = ""  # static bearer (expires); prefer client-credentials below
+    # Service-account OIDC client-credentials for self-registration: auto-refreshed
+    # and, unlike a static token, never expires out from under the runtime. The
+    # service account needs the admin role in the registry to set owner/group
+    # (SPEC §7.1). Issuer falls back to oidc_issuer when left empty.
+    registry_client_id: str = ""
+    registry_client_secret: str = ""
+    registry_oidc_issuer: str = ""
     secret_key: str = ""  # Fernet key; required for resources with secrets
     llm_base_url: str = ""  # gateway's OpenAI-compatible endpoint (resource default)
     auth_mode: Literal["none", "oidc"] = "none"
