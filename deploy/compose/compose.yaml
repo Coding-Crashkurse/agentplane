@@ -165,6 +165,9 @@ services:
       # SaaS guard-rail: cap concurrently-deployed definitions per owner
       # (0 = unlimited; admins bypass). See deploy/compose/README.md.
       AGENTPLANE_RUNTIME_MAX_DEPLOYMENTS_PER_OWNER: "25"
+      # Persist A2A tasks in the runtime DB (Postgres here) so chat
+      # conversations survive restarts and are restorable via ListTasks.
+      AGENTPLANE_RUNTIME_TASK_STORE: database
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       postgres:

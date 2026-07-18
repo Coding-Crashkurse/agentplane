@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-RUNTIME_VERSION = "0.0.4"
+RUNTIME_VERSION = "0.0.5"
 
 EPHEMERAL_TTL_S = 30 * 60  # SPEC §6.2: draft endpoints live 30 minutes
 
@@ -40,6 +40,12 @@ class RuntimeSettings(BaseSettings):
     http_timeout_s: float = 60.0
     host: str = "0.0.0.0"
     port: int = 8000
+    # A2A task persistence (SPEC §6.5): "database" stores tasks in db_url
+    # (SQLite standalone, Postgres in compose) so conversations survive
+    # restarts and clients can restore history via ListTasks/GetTask.
+    # "memory" keeps today's per-process behavior. Draft endpoints always
+    # stay in-memory.
+    task_store: Literal["memory", "database"] = "memory"
     # SaaS guard-rail: cap how many non-ephemeral definitions one owner may keep
     # deployed at once. 0 = unlimited (default). Admins bypass; redeploying an
     # already-deployed definition does not consume an extra slot (SPEC §7.2).

@@ -19,7 +19,7 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+from a2a.server.tasks import DatabaseTaskStore, InMemoryTaskStore, TaskStore, TaskUpdater
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -34,6 +34,7 @@ from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools import Tool, ToolResult
 from pydantic import PrivateAttr
+from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
@@ -121,11 +122,14 @@ class FlowAgentExecutor(AgentExecutor):
         context_id = context.context_id or ""
         if context.current_task is None:
             # Async workflow: the Task object must be enqueued before updates.
+            # The incoming message goes into the task history so persisted
+            # tasks can restore the full conversation (SPEC §6.5).
             await event_queue.enqueue_event(
                 Task(
                     id=task_id,
                     context_id=context_id,
                     status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+                    history=[context.message] if context.message is not None else None,
                 )
             )
         updater = TaskUpdater(event_queue, task_id, context_id)
@@ -163,12 +167,19 @@ def build_a2a_app(
     public_url: str,
     runner_factory: Callable[[], FlowRunner],
     version: str = "1",
+    task_store: TaskStore | None = None,
 ) -> Starlette:
-    """One Starlette app per A2A-exposed flow: card + JSON-RPC routes."""
+    """One Starlette app per A2A-exposed flow: card + JSON-RPC routes.
+
+    ``task_store`` enables persistent conversations (SPEC §6.5): with a
+    database-backed store, tasks survive restarts and clients can restore
+    chat history via the A2A ``ListTasks``/``GetTask`` methods. Defaults to
+    in-memory (today's behavior).
+    """
     card = build_agent_card(defn, public_url, version)
     handler = DefaultRequestHandler(
         agent_executor=FlowAgentExecutor(runner_factory, defn),
-        task_store=InMemoryTaskStore(),
+        task_store=task_store or InMemoryTaskStore(),
         agent_card=card,
     )
 
@@ -378,13 +389,30 @@ class EndpointManager:
         resources: ResourceService,
         settings: RuntimeSettings,
         authenticator: Authenticator | None = None,
+        engine: AsyncEngine | None = None,
     ) -> None:
         self._resources = resources
         self._settings = settings
         self._authenticator = authenticator or Authenticator(settings)
+        self._engine = engine
+        self._task_store: TaskStore | None = None
         self.a2a = PathDispatcher()
         self.mcp = PathDispatcher()
         self._endpoints: dict[str, Endpoint] = {}
+
+    def _persistent_task_store(self) -> TaskStore | None:
+        """One shared database task store (``TASK_STORE=database``), else None.
+
+        The ``tasks`` table (the sdk's canonical name — a custom name would
+        re-register the model on every instantiation) is owned by the a2a-sdk
+        and created on first use, deliberately outside the Alembic chain: it
+        is library schema.
+        """
+        if self._settings.task_store != "database" or self._engine is None:
+            return None
+        if self._task_store is None:
+            self._task_store = DatabaseTaskStore(self._engine)
+        return self._task_store
 
     def endpoint_for(self, name: str) -> Endpoint | None:
         return self._endpoints.get(name)
@@ -444,7 +472,14 @@ class EndpointManager:
             await lifespan.start()
             self.mcp.mount(key, EndpointGuard(http_app, self._authenticator, owner, group))
         else:
-            app = build_a2a_app(defn, public_url, runner_factory, version_label or str(version))
+            # Drafts stay in-memory: ephemeral endpoints must not persist tasks.
+            app = build_a2a_app(
+                defn,
+                public_url,
+                runner_factory,
+                version_label or str(version),
+                task_store=None if ephemeral else self._persistent_task_store(),
+            )
             self.a2a.mount(
                 key,
                 EndpointGuard(

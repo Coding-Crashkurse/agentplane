@@ -39,7 +39,7 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     secrets = FernetSecretsProvider(db, cfg.secret_key)
     resources = ResourceService(db, secrets)
     authenticator = Authenticator(cfg)
-    endpoints = EndpointManager(resources, cfg, authenticator)
+    endpoints = EndpointManager(resources, cfg, authenticator, engine=db.engine)
     registrar = RegistryRegistrar(cfg)
     definitions = DefinitionService(
         db,
