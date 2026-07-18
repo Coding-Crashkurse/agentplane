@@ -97,7 +97,7 @@ dev = [
 
 [[package]]
 name = "agentplane-core"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -112,7 +112,7 @@ requires-dist = [
 
 [[package]]
 name = "agentplane-registry"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "packages/registry" }
 dependencies = [
     { name = "agentplane-core" },
@@ -216,7 +216,7 @@ provides-extras = ["postgres"]
 
 [[package]]
 name = "agentplane-sdk"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "packages/sdk" }
 dependencies = [
     { name = "agentplane-core" },

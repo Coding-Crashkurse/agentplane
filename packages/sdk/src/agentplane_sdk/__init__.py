@@ -22,7 +22,7 @@ from agentplane_sdk.errors import (
     ValidationFailedError,
 )
 
-__version__ = "0.0.3"
+__version__ = "0.0.5"
 
 __all__ = [
     "AgentplaneError",
