@@ -110,6 +110,7 @@ class RegistryEntry(_CardCarrier):
     owner: str
     group: str = ""
     status: HealthStatus = "starting"
+    enabled: bool = True
     last_seen: datetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -148,6 +149,15 @@ class RegistryEntryPatch(BaseModel):
     card: Card | None = None
     url: str | None = None
     tags: list[str] | None = None
+    enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Disable an entry instead of deleting it: a disabled entry is "
+            "hidden from discovery (search) and not health-checked; it stays "
+            "listed for its owner. Re-enabling puts it back into the fast "
+            "'starting' recheck."
+        ),
+    )
 
     @field_serializer("card")
     def _serialize_card(self, value: AgentCard | ToolCard | None) -> JsonObject | None:
@@ -186,6 +196,10 @@ class SearchQuery(BaseModel):
     kind: EntryKind | None = None
     status: HealthStatus | None = None
     semantic: bool = False
+    include_disabled: bool = Field(
+        default=False,
+        description="Search is discovery: disabled entries are excluded unless requested.",
+    )
     owner: str | None = None
     groups: list[str] = Field(
         default_factory=list,

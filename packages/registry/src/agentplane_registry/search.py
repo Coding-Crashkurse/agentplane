@@ -89,6 +89,8 @@ class RegistrySearch(SearchBackend):
 
     async def _load_candidates(self, query: SearchQuery) -> list[RegistryEntry]:
         stmt = select(EntryRow).order_by(EntryRow.created_at.desc())
+        if not query.include_disabled:
+            stmt = stmt.where(EntryRow.enabled.is_(True))
         if query.kind is not None:
             stmt = stmt.where(EntryRow.kind == query.kind)
         if query.status is not None:

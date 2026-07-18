@@ -10,6 +10,7 @@ import json
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import UUID
 
 import typer
 import yaml
@@ -17,6 +18,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from agentplane_core import (
     FlowDefinition,
+    RegistryEntryPatch,
     Resource,
     ValidationResult,
     validate_structure,
@@ -261,6 +263,38 @@ def search(
         card = entry.get("card")
         name = card.get("name", "?") if isinstance(card, dict) else "?"
         typer.echo(f"{name:<30} {entry['kind']:<11} {entry['status']:<9} {entry['url']}")
+
+
+def _set_enabled(
+    entry_id: str, *, enabled: bool, registry_url: str | None, token: str | None
+) -> None:
+    async def do_patch() -> str:
+        async with _registry_client(registry_url, token) as client:
+            entry = await client.update(UUID(entry_id), RegistryEntryPatch(enabled=enabled))
+            return entry.card_name
+
+    name = _run(do_patch())
+    typer.echo(f"{'enabled' if enabled else 'disabled'} {name} ({entry_id})")
+
+
+@app.command()
+def disable(
+    entry_id: Annotated[str, typer.Argument(help="registry entry id (UUID)")],
+    registry_url: RegistryUrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Disable a registry entry (hidden from discovery, not health-checked)."""
+    _set_enabled(entry_id, enabled=False, registry_url=registry_url, token=token)
+
+
+@app.command()
+def enable(
+    entry_id: Annotated[str, typer.Argument(help="registry entry id (UUID)")],
+    registry_url: RegistryUrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Re-enable a registry entry (back into health checking and discovery)."""
+    _set_enabled(entry_id, enabled=True, registry_url=registry_url, token=token)
 
 
 @resources_app.command(name="list")

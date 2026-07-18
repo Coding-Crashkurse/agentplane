@@ -95,7 +95,11 @@ class HealthJob:
     async def run_once(self) -> None:
         """One health pass over all entries (checks run concurrently)."""
         async with self._db.session() as session:
-            rows = (await session.execute(select(EntryRow))).scalars().all()
+            rows = (
+                (await session.execute(select(EntryRow).where(EntryRow.enabled.is_(True))))
+                .scalars()
+                .all()
+            )
         tasks = [
             self._check_starting(row.id)
             if row.status == "starting"
@@ -148,7 +152,9 @@ class HealthJob:
     ) -> None:
         async with self._db.session() as session, session.begin():
             row = await session.get(EntryRow, entry_id)
-            if row is None:
+            if row is None or not row.enabled:
+                # Disabled mid-check (e.g. during the starting fast-retry
+                # loop): keep the API-set "unknown", drop this result.
                 return
             row.status = status
             if touch_last_seen:

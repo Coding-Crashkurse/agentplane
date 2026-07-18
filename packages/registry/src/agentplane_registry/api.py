@@ -127,6 +127,10 @@ async def list_entries(
     status_filter: Annotated[HealthStatus | None, Query(alias="status")] = None,
     tags: Annotated[str, Query(description="comma-separated, AND semantics")] = "",
     owner: Annotated[Literal["me", "all"], Query()] = "me",
+    enabled: Annotated[
+        bool | None,
+        Query(description="Filter by enabled state; the management list shows both by default."),
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page:
@@ -147,6 +151,9 @@ async def list_entries(
     if status_filter is not None:
         stmt = stmt.where(EntryRow.status == status_filter)
         count_stmt = count_stmt.where(EntryRow.status == status_filter)
+    if enabled is not None:
+        stmt = stmt.where(EntryRow.enabled.is_(enabled))
+        count_stmt = count_stmt.where(EntryRow.enabled.is_(enabled))
 
     async with state.db.session() as session:
         rows = (await session.execute(stmt)).scalars().all()
@@ -169,6 +176,9 @@ async def search_entries(
     kind: Annotated[EntryKind | None, Query()] = None,
     status_filter: Annotated[HealthStatus | None, Query(alias="status")] = None,
     semantic: Annotated[bool, Query()] = False,
+    include_disabled: Annotated[
+        bool, Query(description="Search is discovery: disabled entries are excluded by default.")
+    ] = False,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page:
@@ -182,6 +192,7 @@ async def search_entries(
         kind=kind,
         status=status_filter,
         semantic=semantic,
+        include_disabled=include_disabled,
         owner=None if scope.unrestricted else scope.sub,
         groups=[] if scope.unrestricted else sorted(scope.groups),
         limit=limit,
@@ -231,6 +242,11 @@ async def update_entry(
             fresh.url = body.url
         if body.tags is not None:
             fresh.tags_json = list(body.tags)
+        if body.enabled is not None and body.enabled != fresh.enabled:
+            fresh.enabled = body.enabled
+            # Disabled entries are not monitored; re-enabling re-enters the
+            # fast "starting" recheck so the entry turns healthy quickly.
+            fresh.status = "starting" if body.enabled else "unknown"
         fresh.updated_at = datetime.now(UTC)
         row = fresh
     entry = row_to_entry(row)

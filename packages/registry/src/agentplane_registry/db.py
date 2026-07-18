@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Float, String, UniqueConstraint, select
+from sqlalchemy import JSON, Boolean, DateTime, Float, String, UniqueConstraint, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -45,6 +45,7 @@ class EntryRow(Base):
     card_json: Mapped[str] = mapped_column(String)
     tags_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(16), default="starting", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -79,6 +80,7 @@ def row_to_entry(row: EntryRow) -> RegistryEntry:
             "owner": row.owner,
             "group": row.group,
             "status": row.status,
+            "enabled": row.enabled,
             "last_seen": row.last_seen,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
