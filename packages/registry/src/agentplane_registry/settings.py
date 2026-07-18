@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REGISTRY_VERSION = "0.0.3"
+REGISTRY_VERSION = "0.0.5"
 
 
 class RegistrySettings(BaseSettings):
@@ -22,6 +22,7 @@ class RegistrySettings(BaseSettings):
     health_interval_s: float = 60.0
     health_mcp: bool = True
     health_timeout_s: float = 10.0
+    history_retention_h: float = 168.0  # 7 days of status transitions
     embeddings_base_url: str = ""
     embeddings_model: str = ""
     allow_private_urls: bool = False

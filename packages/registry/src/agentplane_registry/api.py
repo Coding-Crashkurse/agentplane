@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from agentplane_core import (
@@ -21,10 +21,18 @@ from agentplane_core import (
     RegistryEntryCreate,
     RegistryEntryPatch,
     SearchQuery,
+    StatusEvent,
+    StatusHistory,
     serialize_card,
 )
 from agentplane_registry.auth import AccessScope, Principal
-from agentplane_registry.db import Database, EntryRow, row_to_entry
+from agentplane_registry.db import (
+    Database,
+    EntryRow,
+    EntryStatusEventRow,
+    record_status_event,
+    row_to_entry,
+)
 from agentplane_registry.search import RegistrySearch
 from agentplane_registry.settings import REGISTRY_VERSION, RegistrySettings
 from agentplane_registry.urlcheck import is_private_url
@@ -105,6 +113,7 @@ async def register_entry(body: RegistryEntryCreate, state: State, caller: Caller
     try:
         async with state.db.session() as session, session.begin():
             session.add(row)
+            record_status_event(session, row.id, "starting")
     except IntegrityError:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -247,6 +256,7 @@ async def update_entry(
             # Disabled entries are not monitored; re-enabling re-enters the
             # fast "starting" recheck so the entry turns healthy quickly.
             fresh.status = "starting" if body.enabled else "unknown"
+            record_status_event(session, fresh.id, fresh.status)
         fresh.updated_at = datetime.now(UTC)
         row = fresh
     entry = row_to_entry(row)
@@ -262,7 +272,45 @@ async def delete_entry(entry_id: uuid.UUID, state: State, caller: Caller) -> Non
         fresh = await session.get(EntryRow, str(entry_id))
         if fresh is not None:
             await session.delete(fresh)
+        await session.execute(
+            delete(EntryStatusEventRow).where(EntryStatusEventRow.entry_id == str(entry_id))
+        )
     await state.search.remove(entry_id)
+
+
+@router.get("/agents/{entry_id}/history", response_model=StatusHistory)
+async def entry_history(
+    entry_id: uuid.UUID,
+    state: State,
+    caller: Caller,
+    hours: Annotated[float, Query(gt=0, le=24 * 90)] = 24.0,
+) -> StatusHistory:
+    """Status transitions within the window, plus the one in effect at its start."""
+    await _load_visible(entry_id, state, caller)
+    window_start = datetime.now(UTC) - timedelta(hours=hours)
+    in_window = (
+        select(EntryStatusEventRow)
+        .where(EntryStatusEventRow.entry_id == str(entry_id))
+        .where(EntryStatusEventRow.at >= window_start)
+        .order_by(EntryStatusEventRow.at)
+    )
+    before_window = (
+        select(EntryStatusEventRow)
+        .where(EntryStatusEventRow.entry_id == str(entry_id))
+        .where(EntryStatusEventRow.at < window_start)
+        .order_by(EntryStatusEventRow.at.desc())
+        .limit(1)
+    )
+    async with state.db.session() as session:
+        events = list((await session.execute(in_window)).scalars().all())
+        prior = (await session.execute(before_window)).scalar_one_or_none()
+    if prior is not None:
+        events.insert(0, prior)
+    return StatusHistory(
+        items=[StatusEvent.model_validate({"status": e.status, "at": e.at}) for e in events],
+        window_h=hours,
+        retention_h=state.settings.history_retention_h,
+    )
 
 
 @router.get("/capabilities", response_model=Capabilities)

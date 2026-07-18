@@ -12,13 +12,13 @@ import asyncio
 import contextlib
 import logging
 import random
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from agentplane_core import agent_card_from_dict
-from agentplane_registry.db import Database, EntryRow
+from agentplane_registry.db import Database, EntryRow, EntryStatusEventRow, record_status_event
 from agentplane_registry.settings import RegistrySettings
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,8 @@ class HealthJob:
         return None
 
     async def run_once(self) -> None:
-        """One health pass over all entries (checks run concurrently)."""
+        """One health pass over all enabled entries (checks run concurrently)."""
+        await self._prune_history()
         async with self._db.session() as session:
             rows = (
                 (await session.execute(select(EntryRow).where(EntryRow.enabled.is_(True))))
@@ -156,9 +157,19 @@ class HealthJob:
                 # Disabled mid-check (e.g. during the starting fast-retry
                 # loop): keep the API-set "unknown", drop this result.
                 return
+            if row.status != status:
+                record_status_event(session, entry_id, status)
             row.status = status
             if touch_last_seen:
                 row.last_seen = datetime.now(UTC)
+
+    async def _prune_history(self) -> None:
+        """Drop status events past the retention window (SPEC §5.3)."""
+        cutoff = datetime.now(UTC) - timedelta(hours=self._settings.history_retention_h)
+        async with self._db.session() as session, session.begin():
+            await session.execute(
+                delete(EntryStatusEventRow).where(EntryStatusEventRow.at < cutoff)
+            )
 
 
 __all__ = ["HealthJob", "check_agent", "check_mcp_server"]

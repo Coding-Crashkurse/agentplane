@@ -51,6 +51,8 @@ from agentplane_core.registry import (
     RegistryEntryPatch,
     SearchQuery,
     Severity,
+    StatusEvent,
+    StatusHistory,
     ToolCard,
     ToolCardTool,
     ValidationIssue,
@@ -78,7 +80,7 @@ from agentplane_core.types import (
 )
 from agentplane_core.validation import ErrorCode, validate_structure
 
-__version__ = "0.0.3"
+__version__ = "0.0.5"
 
 __all__ = [
     "DEPRECATED_NODE_VERSIONS",
@@ -137,6 +139,8 @@ __all__ = [
     "Severity",
     "StartNode",
     "StartNodeConfig",
+    "StatusEvent",
+    "StatusHistory",
     "TemplateNode",
     "TemplateNodeConfig",
     "ToolCard",

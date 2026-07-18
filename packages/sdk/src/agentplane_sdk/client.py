@@ -25,6 +25,7 @@ from agentplane_core import (
     RegistryEntryCreate,
     RegistryEntryPatch,
     Resource,
+    StatusHistory,
     ValidationResult,
 )
 from agentplane_sdk.auth import TokenProvider, as_token_provider
@@ -198,6 +199,12 @@ class RegistryClient(_BaseClient):
             params["tags"] = ",".join(tags)
         response = await self._request("GET", f"{self._prefix}/agents", params=params)
         return Page.model_validate(response.json())
+
+    async def history(self, id: UUID, hours: float = 24.0) -> StatusHistory:
+        response = await self._request(
+            "GET", f"{self._prefix}/agents/{id}/history", params={"hours": str(hours)}
+        )
+        return StatusHistory.model_validate(response.json())
 
     async def capabilities(self) -> Capabilities:
         response = await self._request("GET", f"{self._prefix}/capabilities")
@@ -410,6 +417,9 @@ class SyncRegistryClient:
                 offset=offset,
             )
         )
+
+    def history(self, id: UUID, hours: float = 24.0) -> StatusHistory:
+        return self._call(lambda c: c.history(id, hours))
 
     def capabilities(self) -> Capabilities:
         return self._call(lambda c: c.capabilities())

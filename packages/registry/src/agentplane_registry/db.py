@@ -53,6 +53,28 @@ class EntryRow(Base):
     )
 
 
+class EntryStatusEventRow(Base):
+    """One status transition of an entry (SPEC §5.3).
+
+    Written only when the status actually changes (transitions, not samples),
+    so the table stays small; the health job prunes rows past the retention
+    window. Deliberately no FK: entry deletion cleans up explicitly and the
+    pruner catches strays.
+    """
+
+    __tablename__ = "entry_status_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    entry_id: Mapped[str] = mapped_column(String(36), index=True)
+    status: Mapped[str] = mapped_column(String(16))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+def record_status_event(session: AsyncSession, entry_id: str, status: str) -> None:
+    """Queue a transition event on the session (caller owns the transaction)."""
+    session.add(EntryStatusEventRow(entry_id=entry_id, status=status, at=_utcnow()))
+
+
 class EntryEmbeddingRow(Base):
     """Entry embedding vector.
 
@@ -133,9 +155,11 @@ __all__ = [
     "Database",
     "EntryEmbeddingRow",
     "EntryRow",
+    "EntryStatusEventRow",
     "card_to_json_str",
     "entry_kind",
     "get_row",
     "health_status",
+    "record_status_event",
     "row_to_entry",
 ]

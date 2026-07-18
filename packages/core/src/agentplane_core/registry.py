@@ -209,6 +209,31 @@ class SearchQuery(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
+class StatusEvent(BaseModel):
+    """One status transition of a registry entry (SPEC §5.3)."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    status: HealthStatus
+    at: datetime
+
+
+class StatusHistory(BaseModel):
+    """Status transitions of an entry within a time window.
+
+    ``items`` is sorted ascending by ``at``. The first item may predate the
+    requested window: it is the transition that was in effect when the window
+    started, so consumers can render the full timeline.
+    """
+
+    # Response envelope: forward-compatible (see RegistryEntry).
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[StatusEvent] = Field(default_factory=list)
+    window_h: float
+    retention_h: float
+
+
 class Capabilities(BaseModel):
     """Registry feature discovery (``GET /capabilities``)."""
 
@@ -304,6 +329,8 @@ __all__ = [
     "RegistryEntryPatch",
     "SearchQuery",
     "Severity",
+    "StatusEvent",
+    "StatusHistory",
     "ToolCard",
     "ToolCardTool",
     "ValidationIssue",
