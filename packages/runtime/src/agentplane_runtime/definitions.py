@@ -108,7 +108,7 @@ class DefinitionService:
         return row
 
     async def create_draft(
-        self, defn: FlowDefinition, owner: str, group: str = ""
+        self, defn: FlowDefinition, owner: str, group: str = "", owner_name: str = ""
     ) -> DefinitionInfo:
         result = await self.validate(defn)
         if not result.valid:
@@ -121,6 +121,7 @@ class DefinitionService:
         row = DefinitionRow(
             name=defn.name,
             owner=owner,
+            owner_name=owner_name,
             group=group,
             status="draft",
             draft_json=dump_definition(defn),
@@ -202,6 +203,7 @@ class DefinitionService:
             uuid.UUID(row.registry_id) if row.registry_id else None,
             owner=row.owner,
             group=row.group,
+            owner_name=row.owner_name,
         )
         async with self._db.session() as session, session.begin():
             fresh = await session.get(DefinitionRow, name)
@@ -421,6 +423,7 @@ class DefinitionService:
                 uuid.UUID(row.registry_id) if row.registry_id else None,
                 owner=row.owner,
                 group=row.group,
+                owner_name=row.owner_name,
             )
 
 

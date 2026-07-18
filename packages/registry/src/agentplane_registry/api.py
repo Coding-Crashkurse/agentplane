@@ -75,20 +75,26 @@ def _visible(row: EntryRow, caller: Principal, auth_mode: str) -> bool:
     return AccessScope.for_caller(caller, auth_mode).allows(row.owner, row.group)
 
 
-def _attribution(body: RegistryEntryCreate, caller: Principal, auth_mode: str) -> tuple[str, str]:
-    """The (owner, group) to record.
+def _attribution(
+    body: RegistryEntryCreate, caller: Principal, auth_mode: str
+) -> tuple[str, str, str]:
+    """The (owner, group, owner_name) to record.
 
     A trusted admin caller (the runtime publishing on behalf of a user) may
-    assert both. A regular caller owns what they register and may only attribute
-    it to one of their own groups; anything else falls back to their own subject
-    and no group.
+    assert all three. A regular caller owns what they register and may only
+    attribute it to one of their own groups; the display name always comes
+    from their own token then.
     """
     if caller.is_admin and auth_mode == "oidc":
-        return body.owner or caller.sub, body.group or ""
+        owner = body.owner or caller.sub
+        # An asserted owner needs an asserted name; for self-registration the
+        # admin's own token name is the fallback.
+        owner_name = body.owner_name or ("" if body.owner else caller.username)
+        return owner, body.group or "", owner_name
     group = body.group or ""
     if group and group not in caller.groups:
         group = ""
-    return caller.sub, group
+    return caller.sub, group, caller.username
 
 
 def _check_url(url: str, settings: RegistrySettings) -> None:
@@ -105,12 +111,13 @@ async def register_entry(
 ) -> RegistryEntry:
     _check_url(body.url, state.settings)
     now = datetime.now(UTC)
-    owner, group = _attribution(body, caller, state.settings.auth_mode)
+    owner, group, owner_name = _attribution(body, caller, state.settings.auth_mode)
     row = EntryRow(
         id=str(uuid.uuid4()),
         kind=body.kind,
         name=body.card.name,
         owner=owner,
+        owner_name=owner_name,
         group=group,
         url=body.url,
         card_json=_dump_card(body),

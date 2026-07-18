@@ -84,6 +84,7 @@ class RegistryRegistrar:
         existing_id: UUID | None,
         owner: str = "",
         group: str = "",
+        owner_name: str = "",
     ) -> UUID | None:
         """One immediate attempt; on failure, retries continue in the background.
 
@@ -95,10 +96,14 @@ class RegistryRegistrar:
         if not self.enabled:
             return None
         try:
-            return await self._register_once(defn, public_url, existing_id, owner, group)
+            return await self._register_once(
+                defn, public_url, existing_id, owner, group, owner_name
+            )
         except AgentplaneError as exc:
             logger.warning("registry registration failed (%s); retrying in background", exc)
-            self._spawn(self._retry_register(defn, public_url, existing_id, owner, group))
+            self._spawn(
+                self._retry_register(defn, public_url, existing_id, owner, group, owner_name)
+            )
             return existing_id
 
     async def _register_once(
@@ -108,6 +113,7 @@ class RegistryRegistrar:
         existing_id: UUID | None,
         owner: str = "",
         group: str = "",
+        owner_name: str = "",
     ) -> UUID:
         card = build_card(defn, public_url)
         kind = "mcp_server" if defn.expose.kind == "mcp" else "agent"
@@ -118,6 +124,7 @@ class RegistryRegistrar:
             tags=list(defn.tags),
             owner=owner or None,
             group=group or None,
+            owner_name=owner_name or None,
         )
         async with self._client() as client:
             if existing_id is not None:
@@ -152,11 +159,12 @@ class RegistryRegistrar:
         existing_id: UUID | None,
         owner: str = "",
         group: str = "",
+        owner_name: str = "",
     ) -> None:
         for delay in _RETRY_DELAYS_S:
             await asyncio.sleep(delay)
             try:
-                await self._register_once(defn, public_url, existing_id, owner, group)
+                await self._register_once(defn, public_url, existing_id, owner, group, owner_name)
             except AgentplaneError as exc:
                 logger.warning("registry retry failed (%s)", exc)
                 continue

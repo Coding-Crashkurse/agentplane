@@ -39,6 +39,7 @@ def make_token(
         "exp": int(time.time()) + 600,
         "realm_access": {"roles": roles},
         "groups": groups or [],
+        "preferred_username": f"{sub}.name",
     }
     return jwt.encode(claims, _PRIVATE_KEY, algorithm="RS256", headers={"kid": KID})
 
@@ -80,7 +81,10 @@ async def test_owner_is_taken_from_sub(oidc_client: httpx.AsyncClient) -> None:
         "/api/v1/agents", json=agent_entry_body(), headers=_auth(token)
     )
     assert response.status_code == 201
-    assert response.json()["owner"] == "alice"
+    body = response.json()
+    assert body["owner"] == "alice"
+    # display name is denormalized from the caller's token
+    assert body["owner_name"] == "alice.name"
 
 
 @respx.mock
@@ -142,9 +146,10 @@ async def test_admin_registrar_stamps_the_real_owner(oidc_client: httpx.AsyncCli
     """A trusted admin service (the runtime) may publish on behalf of a user."""
     _mock_issuer()
     runtime_svc = make_token("runtime", ["admin"])
-    body = {**agent_entry_body("a1"), "owner": "alice"}
+    body = {**agent_entry_body("a1"), "owner": "alice", "owner_name": "Alice A."}
     entry = (await oidc_client.post("/api/v1/agents", json=body, headers=_auth(runtime_svc))).json()
     assert entry["owner"] == "alice"
+    assert entry["owner_name"] == "Alice A."
     # ...and alice sees it as hers
     alice = make_token("alice", ["user"])
     listing = (await oidc_client.get("/api/v1/agents", headers=_auth(alice))).json()

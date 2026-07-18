@@ -108,6 +108,14 @@ class RegistryEntry(_CardCarrier):
     url: str
     tags: list[str] = Field(default_factory=list)
     owner: str
+    owner_name: str = Field(
+        default="",
+        description=(
+            "Display name of the owner (e.g. preferred_username), denormalized "
+            "at registration time. `owner` (the OIDC subject) stays the "
+            "authorization key; this field is presentation only."
+        ),
+    )
     group: str = ""
     status: HealthStatus = "starting"
     enabled: bool = True
@@ -139,6 +147,14 @@ class RegistryEntryCreate(_CardCarrier):
             "Team the entry belongs to; members of the group get access. "
             "Admin callers may set it freely; other callers only to one of "
             "their own groups."
+        ),
+    )
+    owner_name: str | None = Field(
+        default=None,
+        description=(
+            "Display name for the owner. Honored for admin callers (a trusted "
+            "registrar publishing on behalf of a user); for other callers the "
+            "registry takes it from their own token."
         ),
     )
 

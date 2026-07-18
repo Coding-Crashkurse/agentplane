@@ -21,6 +21,7 @@ class Principal:
     roles: frozenset[str] = field(default_factory=frozenset)
     groups: frozenset[str] = field(default_factory=frozenset)
     is_admin: bool = False
+    username: str = ""  # display name (e.g. preferred_username); never used for authz
 
 
 ANONYMOUS = Principal(sub="anonymous", roles=frozenset(), groups=frozenset(), is_admin=False)
@@ -68,12 +69,14 @@ class OidcValidator:
         roles_claim: str,
         admin_role: str,
         groups_claim: str = "groups",
+        username_claim: str = "preferred_username",
         *,
         jwks_ttl_s: float = 300.0,
     ) -> None:
         self._issuer = issuer.rstrip("/")
         self._audience = audience
         self._roles_claim = roles_claim
+        self._username_claim = username_claim
         self._admin_role = admin_role
         self._groups_claim = groups_claim
         self._jwks_ttl_s = jwks_ttl_s
@@ -122,7 +125,14 @@ class OidcValidator:
         sub = claims.get("sub")
         if not isinstance(sub, str) or not sub:
             raise jwt.InvalidTokenError("token has no sub")
-        return Principal(sub=sub, roles=roles, groups=groups, is_admin=self._admin_role in roles)
+        username = _claim_path(claims, self._username_claim)
+        return Principal(
+            sub=sub,
+            roles=roles,
+            groups=groups,
+            is_admin=self._admin_role in roles,
+            username=username if isinstance(username, str) else "",
+        )
 
 
 class Authenticator:
@@ -140,6 +150,7 @@ class Authenticator:
                 settings.roles_claim,
                 settings.admin_role,
                 settings.groups_claim,
+                settings.username_claim,
             )
 
     async def authenticate(self, request: Request) -> Principal:

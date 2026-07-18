@@ -33,6 +33,7 @@ class DefinitionRow(Base):
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner: Mapped[str] = mapped_column(String(255), index=True)
+    owner_name: Mapped[str] = mapped_column(String(255), default="")
     group: Mapped[str] = mapped_column(String(255), default="", index=True)
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     draft_json: Mapped[str] = mapped_column(String)

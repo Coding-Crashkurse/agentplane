@@ -18,6 +18,7 @@ class RegistrySettings(BaseSettings):
     oidc_audience: str = ""
     roles_claim: str = "realm_access.roles"
     groups_claim: str = "groups"  # team membership; scopes shared entries
+    username_claim: str = "preferred_username"  # display name recorded as owner_name
     admin_role: str = "admin"
     health_interval_s: float = 60.0
     health_mcp: bool = True

@@ -115,7 +115,7 @@ async def create_definition(
     _require_builder(state, caller)
     try:
         return await state.definitions.create_draft(
-            body, caller.sub, group=_chosen_group(state, caller, group)
+            body, caller.sub, group=_chosen_group(state, caller, group), owner_name=caller.username
         )
     except DefinitionInvalidError as exc:
         return _validation_response(exc.result)

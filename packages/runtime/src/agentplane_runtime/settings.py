@@ -34,6 +34,7 @@ class RuntimeSettings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     roles_claim: str = "realm_access.roles"
+    username_claim: str = "preferred_username"  # display name recorded on definitions/entries
     groups_claim: str = "groups"  # team membership; scopes shared resources
     admin_role: str = "admin"
     builder_role: str = "builder"  # role required for definition/resource writes (SPEC §7.1)
