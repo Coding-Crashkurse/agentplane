@@ -25,6 +25,13 @@ processors:
         - 'IsMatch(name, "^OPTIONS .*")'
         - 'IsMatch(name, "^GET /a2a/.*")'
         - 'IsMatch(name, "^GET /mcp/.*")'
+        # The HTTP transport spans around an invocation (gateway + runtime)
+        # are plumbing: dropping them makes agentplane.flow the trace's
+        # effective root, so tracing UIs show the agent run itself - name,
+        # input/output, real latency - instead of "POST /a2a/..." with the
+        # lifetime of an SSE connection.
+        - 'IsMatch(name, "^POST /a2a/.*")'
+        - 'IsMatch(name, "^POST /mcp/.*")'
         - 'IsMatch(name, "^(GET|POST|PUT|PATCH|DELETE) /(api/v1|registry|runtime)/.*")'
 
 exporters:

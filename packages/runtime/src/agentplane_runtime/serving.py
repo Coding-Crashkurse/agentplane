@@ -13,6 +13,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, MutableMapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -61,6 +62,11 @@ from agentplane_runtime.settings import EPHEMERAL_TTL_S, RuntimeSettings
 logger = logging.getLogger(__name__)
 
 AGENT_CARD_PATH = "/.well-known/agent-card.json"
+
+# Caller display name for trace attribution, set by the EndpointGuard and read
+# by the executor: the HTTP spans are dropped as noise by the collector, so
+# user attribution must live on the flow span itself.
+_caller_display: ContextVar[str] = ContextVar("agentplane_caller_display", default="")
 
 # ASGI protocol types — inherently loose (the ASGI spec is dict-based).
 Scope = MutableMapping[str, Any]
@@ -211,13 +217,21 @@ class FlowAgentExecutor(AgentExecutor):
                 # History is best-effort: a store hiccup must not fail the chat.
                 logger.warning("conversation history unavailable", exc_info=True)
 
+        # The flow span is the trace's anchor (the HTTP spans around it are
+        # dropped as noise), so it carries the caller and the conversation.
+        trace_attributes: dict[str, str] = {}
+        if context_id:
+            trace_attributes["session.id"] = context_id
+        if caller := _caller_display.get():
+            trace_attributes["user.id"] = caller
+
         runner = self._runner_factory()
         try:
             inputs = bind_message_to_inputs(self._defn, context.get_user_input())
             result = await runner.execute(
                 inputs,
                 stream=stream_chunk,
-                trace_attributes={"session.id": context_id} if context_id else None,
+                trace_attributes=trace_attributes,
                 conversation=conversation,
             )
         except ValueError as exc:
@@ -414,6 +428,7 @@ class EndpointGuard:
         # convention Langfuse maps to the trace's user. The username reads
         # better in tracing UIs; the subject is the fallback identity.
         trace.get_current_span().set_attribute("user.id", principal.username or principal.sub)
+        _caller_display.set(principal.username or principal.sub)
         # Expose the caller to the a2a app (SPEC §6.5): the task store scopes
         # persisted conversations by this user (StarletteUser reads
         # display_name).

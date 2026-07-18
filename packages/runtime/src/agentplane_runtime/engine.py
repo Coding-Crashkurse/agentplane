@@ -394,6 +394,7 @@ class FlowRunner:
         seeded: dict[str, PortValue] = {
             f"{start.id}.{key}": value for key, value in start_values.items()
         }
+        input_preview = _trace_preview(start_values)
         with tracer.start_as_current_span(
             "agentplane.flow",
             attributes={
@@ -401,7 +402,14 @@ class FlowRunner:
                 "flow.version": self._context.flow_version,
                 # What was asked / answered, in OpenInference terms (tracing
                 # UIs map input.value/output.value to observation input/output).
-                "input.value": _trace_preview(start_values),
+                "input.value": input_preview,
+                # Trace-level overrides: the flow IS the trace (the HTTP spans
+                # around it are dropped in the collector), so name the trace
+                # after the flow and surface the exchange at trace level.
+                # Plain OTLP attribute hints - backends that don't know them
+                # simply ignore them (no vendor SDK involved).
+                "langfuse.trace.name": self._context.flow_name,
+                "langfuse.trace.input": input_preview,
                 **trace_attributes,
             },
         ) as span:
@@ -413,7 +421,9 @@ class FlowRunner:
             values: dict[str, PortValue] = result["values"]
             output = values.get(f"{end.id}.output")
             if output is not None:
-                span.set_attribute("output.value", _trace_preview(output))
+                output_preview = _trace_preview(output)
+                span.set_attribute("output.value", output_preview)
+                span.set_attribute("langfuse.trace.output", output_preview)
         return output
 
 
