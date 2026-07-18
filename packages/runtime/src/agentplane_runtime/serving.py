@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.context import ServerCallContext
 from a2a.server.events.event_queue import EventQueue
+from a2a.server.owner_resolver import resolve_user_scope
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import DatabaseTaskStore, InMemoryTaskStore, TaskStore, TaskUpdater
@@ -37,6 +39,7 @@ from opentelemetry import trace
 from pydantic import PrivateAttr
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.applications import Starlette
+from starlette.authentication import SimpleUser
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
@@ -344,6 +347,10 @@ class EndpointGuard:
         # Attribute the trace to the caller (SPEC §12): `user.id` is the OTel
         # convention Langfuse maps to the trace's user.
         trace.get_current_span().set_attribute("user.id", principal.sub)
+        # Expose the caller to the a2a app (SPEC §6.5): the task store scopes
+        # persisted conversations by this user (StarletteUser reads
+        # display_name).
+        scope["user"] = SimpleUser(principal.sub)
         await self._app(scope, receive, send)
 
 
@@ -407,24 +414,26 @@ class EndpointManager:
         self._settings = settings
         self._authenticator = authenticator or Authenticator(settings)
         self._engine = engine
-        self._task_store: TaskStore | None = None
         self.a2a = PathDispatcher()
         self.mcp = PathDispatcher()
         self._endpoints: dict[str, Endpoint] = {}
 
-    def _persistent_task_store(self) -> TaskStore | None:
-        """One shared database task store (``TASK_STORE=database``), else None.
+    def _persistent_task_store(self, flow_key: str) -> TaskStore | None:
+        """A database task store for one endpoint (``TASK_STORE=database``).
 
-        The ``tasks`` table (the sdk's canonical name — a custom name would
-        re-register the model on every instantiation) is owned by the a2a-sdk
-        and created on first use, deliberately outside the Alembic chain: it
-        is library schema.
+        All endpoints share the sdk-owned ``tasks`` table (created on first
+        use, deliberately outside the Alembic chain — library schema). The
+        owner column scopes rows to ``{flow}::{caller}``, so ``ListTasks`` /
+        ``GetTask`` never leak conversations across endpoints or users. With
+        auth off the caller part is empty — one shared history per flow.
         """
         if self._settings.task_store != "database" or self._engine is None:
             return None
-        if self._task_store is None:
-            self._task_store = DatabaseTaskStore(self._engine)
-        return self._task_store
+
+        def owner(context: ServerCallContext) -> str:
+            return f"{flow_key}::{resolve_user_scope(context)}"
+
+        return DatabaseTaskStore(self._engine, owner_resolver=owner)
 
     def endpoint_for(self, name: str) -> Endpoint | None:
         return self._endpoints.get(name)
@@ -490,7 +499,7 @@ class EndpointManager:
                 public_url,
                 runner_factory,
                 version_label or str(version),
-                task_store=None if ephemeral else self._persistent_task_store(),
+                task_store=None if ephemeral else self._persistent_task_store(defn.name),
             )
             self.a2a.mount(
                 key,

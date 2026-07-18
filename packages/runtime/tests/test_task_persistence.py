@@ -105,6 +105,40 @@ async def test_tasks_persist_across_endpoint_restarts(tmp_path: Path) -> None:
     await db.dispose()
 
 
+@respx.mock
+async def test_tasks_are_scoped_per_endpoint(tmp_path: Path) -> None:
+    """Regression: a shared store must not leak conversations across agents."""
+    respx.post(f"{LLM_BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, text=SSE_PONG, headers={"content-type": "text/event-stream"}
+        )
+    )
+    respx.route(host="rt.test").pass_through()
+    db = await _database(tmp_path)
+    manager = await _manager(db)
+    first = load_example("echo-agent.yaml")
+    second = first.model_copy(update={"name": "echo-two"})
+    await manager.start(first, 1)
+    await manager.start(second, 1)
+
+    transport = httpx.ASGITransport(app=manager.a2a)
+    async with httpx.AsyncClient(transport=transport, base_url="http://rt.test") as client:
+        headers = {"A2A-Version": "1.0"}
+        await client.post(
+            "/echo-agent/", json=_rpc("SendMessage", _send_params("ping", "m1"), 1), headers=headers
+        )
+        mine = await client.post(
+            "/echo-agent/", json=_rpc("ListTasks", {"pageSize": 10}, 2), headers=headers
+        )
+        others = await client.post(
+            "/echo-two/", json=_rpc("ListTasks", {"pageSize": 10}, 3), headers=headers
+        )
+    assert len(mine.json()["result"]["tasks"]) == 1
+    assert others.json()["result"].get("tasks", []) == []
+    await manager.stop_all()
+    await db.dispose()
+
+
 @pytest.mark.parametrize("ephemeral", [True])
 @respx.mock
 async def test_draft_endpoints_stay_in_memory(tmp_path: Path, ephemeral: bool) -> None:
