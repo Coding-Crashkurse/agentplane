@@ -253,6 +253,18 @@ services:
       # dev-only key (64 hex); generate a real one for prod: openssl rand -hex 32
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       TELEMETRY_ENABLED: "false"
+      # SSO against Keycloak (custom generic OIDC provider): admins click
+      # "Sign in with agentplane" instead of a separate Langfuse password.
+      # Account linking merges the SSO login into the seeded init user (same
+      # email = demo-admin@example.com) so that admin lands in the agentplane
+      # org. Additional admins are invited by email in the Langfuse UI (OSS has
+      # no auto-org-provisioning; SCIM is enterprise).
+      AUTH_CUSTOM_CLIENT_ID: langfuse
+      AUTH_CUSTOM_CLIENT_SECRET: langfuse-client-secret
+      AUTH_CUSTOM_ISSUER: http://auth.localhost/realms/agentplane
+      AUTH_CUSTOM_NAME: agentplane
+      AUTH_CUSTOM_SCOPE: "openid email profile"
+      AUTH_CUSTOM_ALLOW_ACCOUNT_LINKING: "true"
       CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: clickhouse
@@ -281,8 +293,10 @@ services:
       LANGFUSE_INIT_PROJECT_NAME: agentplane
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local
       LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local
-      LANGFUSE_INIT_USER_EMAIL: admin@example.com
-      LANGFUSE_INIT_USER_NAME: Admin
+      # matches the Keycloak demo-admin email so SSO account-linking lands the
+      # admin in this seeded org (owns project agentplane)
+      LANGFUSE_INIT_USER_EMAIL: demo-admin@example.com
+      LANGFUSE_INIT_USER_NAME: Demo Admin
       LANGFUSE_INIT_USER_PASSWORD: admin12345
     depends_on:
       &langfuse-depends-on

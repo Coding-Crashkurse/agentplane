@@ -248,6 +248,29 @@
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": false
+    },
+    {
+      "clientId": "langfuse",
+      "name": "Langfuse SSO",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "langfuse-client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://langfuse.localhost/api/auth/callback/custom"
+      ],
+      "webOrigins": [
+        "http://langfuse.localhost"
+      ],
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "profile",
+        "email",
+        "web-origins"
+      ]
     }
   ],
   "defaultRoles": [

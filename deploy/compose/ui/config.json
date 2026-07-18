@@ -16,7 +16,10 @@
       "description": "Build and deploy agent flows",
       "icon": "workflow",
       "url": "http://builder.localhost",
-      "roles": ["builder", "admin"]
+      "roles": [
+        "builder",
+        "admin"
+      ]
     },
     {
       "id": "traces",
@@ -24,7 +27,9 @@
       "description": "Traces, evals & costs",
       "icon": "activity",
       "url": "http://langfuse.localhost",
-      "roles": ["builder", "admin"]
+      "roles": [
+        "admin"
+      ]
     },
     {
       "id": "user-management",
@@ -32,7 +37,9 @@
       "description": "Manage platform users and roles",
       "icon": "users",
       "url": "http://auth.localhost/admin/agentplane/console/",
-      "roles": ["admin"]
+      "roles": [
+        "admin"
+      ]
     }
   ]
 }
