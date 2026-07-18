@@ -150,6 +150,11 @@ services:
       AGENTPLANE_RUNTIME_DB_URL: postgresql+asyncpg://agentplane:agentplane@postgres/runtime
       AGENTPLANE_RUNTIME_PUBLIC_BASE_URL: http://api.localhost
       AGENTPLANE_RUNTIME_REGISTRY_URL: http://registry:8100
+      # Service-account client-credentials so the runtime can self-register
+      # deployments (auto-refreshed). The agentplane-cli service account carries
+      # the admin role in the realm so it may set the entry's owner/group.
+      AGENTPLANE_RUNTIME_REGISTRY_CLIENT_ID: agentplane-cli
+      AGENTPLANE_RUNTIME_REGISTRY_CLIENT_SECRET: agentplane-cli-secret
       # dev-only Fernet key (base64 of "agentplane-local-dev-fernet-0000");
       # override with a generated one outside local dev
       AGENTPLANE_RUNTIME_SECRET_KEY: ${AGENTPLANE_RUNTIME_SECRET_KEY:-YWdlbnRwbGFuZS1sb2NhbC1kZXYtZmVybmV0LTAwMDA=}
