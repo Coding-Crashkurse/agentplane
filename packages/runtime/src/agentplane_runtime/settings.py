@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-RUNTIME_VERSION = "0.0.6"
+RUNTIME_VERSION = "0.0.7"
 
 EPHEMERAL_TTL_S = 30 * 60  # SPEC §6.2: draft endpoints live 30 minutes
 
