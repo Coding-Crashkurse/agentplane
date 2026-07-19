@@ -87,7 +87,7 @@ from agentplane_core.types import (
 )
 from agentplane_core.validation import ErrorCode, validate_structure
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 __all__ = [
     "DEPRECATED_NODE_VERSIONS",
