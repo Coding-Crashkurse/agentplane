@@ -1,13 +1,13 @@
 """Stateless definition validation (SPEC §3.7).
 
 ``validate_structure`` implements every check that needs only the definition
-itself: E001, E002, E010, E011, E023, E030, E031, E032, E040, E050, W002,
-W003. Pure function, no I/O — importable by the runtime AND by external
+itself: E001, E002, E010, E011, E023, E030, E031, E032, E040, E050, E060,
+W002, W003. Pure function, no I/O — importable by the runtime AND by external
 consumers, so pre-deploy validation and deploy validation are the same code.
 
-Checks that require runtime state (E020, E021, E022, W001) live in the
-runtime and are exposed via ``POST /definitions/validate``. Local validation
-is advisory; the runtime's answer is authoritative.
+Checks that require runtime state (E020, E021, E022, E061, E062, W001, W004)
+live in the runtime and are exposed via ``POST /definitions/validate``. Local
+validation is advisory; the runtime's answer is authoritative.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from agentplane_core.definition import (
     NODE_CATALOG,
     SCHEMA_VERSION,
+    AgentNode,
     EndNode,
     FlowDefinition,
     LlmCallNode,
@@ -52,9 +53,13 @@ ErrorCode = Literal[
     "E032",  # Dangling edge or incompatible port types
     "E040",  # Duplicate node id / duplicate edge
     "E050",  # Invalid expose config
+    "E060",  # Agent reference: flow references itself
+    "E061",  # Agent references unresolvable: registry not configured/unreachable (runtime)
+    "E062",  # Agent reference not found or not an enabled A2A agent (runtime)
     "W001",  # Node version deprecated (runtime)
     "W002",  # Unused node (no path to end)
     "W003",  # stream: true ignored for MCP-exposed flows
+    "W004",  # Referenced agent currently unhealthy (runtime)
 ]
 
 # Patterns that look like credentials; matching literals raise E023 because
@@ -418,6 +423,76 @@ def _validate_node_fields(defn: FlowDefinition) -> list[ValidationIssue]:
                         + ", ".join(sorted(duplicates)),
                     )
                 )
+            issues.extend(_router_rule_issues(node))
+        if isinstance(node, AgentNode):
+            issues.extend(_agent_ref_issues(node, defn.name))
+    return issues
+
+
+# Conditions that compare the routed value against `rule.value`.
+_COMPARISON_CONDITIONS = frozenset({"equals", "not_equals", "contains", "gt", "gte", "lt", "lte"})
+_NUMERIC_CONDITIONS = frozenset({"gt", "gte", "lt", "lte"})
+
+
+def _router_rule_issues(node: RouterNode) -> list[ValidationIssue]:
+    """E010/E011 for condition/operand/input-type mismatches of router rules."""
+    issues: list[ValidationIssue] = []
+    input_type = node.config.input_type
+    for index, rule in enumerate(node.config.rules):
+        path = f"nodes/{node.id}/config/rules/{index}"
+        if rule.when in _COMPARISON_CONDITIONS:
+            if input_type == "documents":
+                issues.append(
+                    _issue(
+                        "E011",
+                        f"{path}/when",
+                        "documents input supports only 'empty'/'not_empty' conditions",
+                    )
+                )
+            if rule.value is None:
+                issues.append(
+                    _issue("E010", f"{path}/value", f"condition {rule.when!r} requires a value")
+                )
+            elif rule.when in _NUMERIC_CONDITIONS and (
+                isinstance(rule.value, bool) or not isinstance(rule.value, int | float)
+            ):
+                issues.append(
+                    _issue(
+                        "E011",
+                        f"{path}/value",
+                        f"condition {rule.when!r} requires a numeric value",
+                    )
+                )
+        elif rule.value is not None:
+            issues.append(
+                _issue(
+                    "E011",
+                    f"{path}/value",
+                    f"condition {rule.when!r} takes no value",
+                )
+            )
+        if rule.path and input_type != "json":
+            issues.append(
+                _issue(
+                    "E011",
+                    f"{path}/path",
+                    f"path requires input_type 'json' (got {input_type!r})",
+                )
+            )
+    return issues
+
+
+def _agent_ref_issues(node: AgentNode, flow_name: str) -> list[ValidationIssue]:
+    """E060 self-reference and E011 duplicates for an agent node's sub-agents."""
+    issues: list[ValidationIssue] = []
+    seen: set[str] = set()
+    for index, ref in enumerate(node.config.agents):
+        path = f"nodes/{node.id}/config/agents/{index}/name"
+        if ref.name == flow_name:
+            issues.append(_issue("E060", path, "agent must not reference the flow itself"))
+        if ref.name in seen:
+            issues.append(_issue("E011", path, f"duplicate agent reference {ref.name!r}"))
+        seen.add(ref.name)
     return issues
 
 

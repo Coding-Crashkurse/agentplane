@@ -1,0 +1,34 @@
+# An orchestrator must not reference the flow itself as a sub-agent (E060).
+expected_codes: [E060]
+definition:
+  schema_version: 1
+  name: recursive-orchestrator
+  expose:
+    kind: a2a
+  nodes:
+    - id: start_1
+      type: start
+      version: 1
+      config:
+        input_schema:
+          type: object
+          properties:
+            request:
+              type: string
+          required: [request]
+    - id: agent_1
+      type: agent
+      version: 1
+      config:
+        resource: default-llm
+        prompt: "{request}"
+        agents:
+          - name: recursive-orchestrator
+    - id: end_1
+      type: end
+      version: 1
+      config:
+        output_from: agent_1.text
+  edges:
+    - { from: start_1.request, to: agent_1.request }
+    - { from: agent_1.text, to: end_1.input }

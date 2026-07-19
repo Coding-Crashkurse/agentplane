@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from agentplane_core.types import (
     BranchName,
@@ -118,6 +118,20 @@ class AgentToolRef(_StrictModel):
     )
 
 
+class A2aAgentRef(_StrictModel):
+    """One sub-agent an orchestrator may call, referenced by registry card name.
+
+    Only A2A agents already registered in the platform registry can be
+    referenced — the runtime resolves the name to the agent's gateway URL, so
+    delegated calls stay authenticated, rate-limited, and traced. URLs never
+    appear in definitions (they are environment-specific; names are not).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: Slug = Field(description="Registry card name of a deployed A2A agent")
+
+
 class AgentNodeConfig(_StrictModel):
     """LLM + tool loop (v1.1): the model calls MCP tools until it answers.
 
@@ -125,6 +139,10 @@ class AgentNodeConfig(_StrictModel):
     model may emit tool calls (OpenAI tool-calling); the runtime runs them via
     MCP and feeds the results back, up to ``max_iterations``, then returns the
     final assistant text.
+
+    ``agents`` turns the node into an orchestrator: each referenced registry
+    agent is offered to the model as an additional tool whose description comes
+    from the agent's card; a call is delegated over A2A through the gateway.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -134,6 +152,13 @@ class AgentNodeConfig(_StrictModel):
     prompt: str
     system_prompt: str = ""
     tools: list[AgentToolRef] = Field(default_factory=list)
+    agents: list[A2aAgentRef] = Field(
+        default_factory=list,
+        description=(
+            "A2A agents (registry card names) the model may delegate to; "
+            "resolved through the registry, called through the gateway."
+        ),
+    )
     max_iterations: int = Field(
         default=6, ge=1, le=50, description="Cap on tool-call turns before forcing a final answer."
     )
@@ -195,14 +220,45 @@ class RerankNodeConfig(_StrictModel):
 
 RouterInputType = Literal["text", "json", "documents"]
 
+# `empty`/`not_empty` test presence; the rest compare against `value`.
+# Comparison conditions were added in v1.1.1 for deterministic routing on
+# structured output (an llm_call's JSON port feeds the router, `path` selects
+# the field). Additive: existing definitions keep validating unchanged.
+RouterCondition = Literal[
+    "not_empty",
+    "empty",
+    "equals",
+    "not_equals",
+    "contains",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+]
+
 
 class RouterRule(_StrictModel):
-    """One branch condition, evaluated in order; first match wins."""
+    """One branch condition, evaluated in order; first match wins.
+
+    ``path`` (dot notation, JSON inputs only) selects the value under test —
+    empty means the whole input. ``equals``/``not_equals`` compare it to
+    ``value``; ``contains`` is substring/membership/key test; ``gt``/``gte``/
+    ``lt``/``lte`` compare numerically. A missing path resolves to null: it
+    matches ``empty`` and never matches a comparison.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    when: Literal["not_empty", "empty"]
+    when: RouterCondition
     branch: BranchName
+    path: str = Field(
+        default="",
+        description="Dot path into a JSON input selecting the value under test; empty = input.",
+    )
+    value: JsonValue = Field(
+        default=None,
+        description="Comparison operand; required for every condition except empty/not_empty.",
+    )
 
 
 class RouterNodeConfig(_StrictModel):
@@ -499,6 +555,7 @@ __all__ = [
     "DEPRECATED_NODE_VERSIONS",
     "NODE_CATALOG",
     "SCHEMA_VERSION",
+    "A2aAgentRef",
     "AgentNode",
     "AgentNodeConfig",
     "AgentToolRef",
@@ -518,6 +575,7 @@ __all__ = [
     "RerankNodeConfig",
     "RetrievalNode",
     "RetrievalNodeConfig",
+    "RouterCondition",
     "RouterInputType",
     "RouterNode",
     "RouterNodeConfig",

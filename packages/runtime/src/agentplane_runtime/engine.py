@@ -4,20 +4,22 @@ graph once (cached); every node execution is one OTel span.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from operator import or_
-from typing import Annotated, Protocol, TypedDict
+from typing import Annotated, Protocol, TypedDict, TypeGuard, cast
 
+import httpx
 from langgraph.graph import END, START, StateGraph
-from opentelemetry import trace
+from opentelemetry import propagate, trace
 from pydantic import JsonValue
 
 from agentplane_core import (
     AgentNode,
-    AgentToolRef,
+    AgentNodeConfig,
     Document,
     EndNode,
     FlowDefinition,
@@ -31,6 +33,7 @@ from agentplane_core import (
     RetrievalNode,
     RouterNode,
     RouterNodeConfig,
+    RouterRule,
     StartNode,
     TemplateNode,
     VectorDBResource,
@@ -38,6 +41,7 @@ from agentplane_core import (
     render_documents,
     split_port_ref,
 )
+from agentplane_runtime.directory import AgentDirectory, ResolvedAgent
 from agentplane_runtime.llm import OpenAICompatibleClient
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.settings import RuntimeSettings
@@ -77,6 +81,18 @@ _conversation_var: ContextVar[tuple[ConversationTurn, ...]] = ContextVar(
     "agentplane_conversation", default=()
 )
 
+# A2A message metadata key carrying the orchestration depth of a call chain.
+CALL_DEPTH_METADATA_KEY = "agentplane_call_depth"
+
+# Per-run orchestration depth of the *incoming* request (0 = called directly).
+_call_depth_var: ContextVar[int] = ContextVar("agentplane_call_depth", default=0)
+
+# The caller's raw bearer token, set by the serving layer's EndpointGuard.
+# Sub-agent calls forward it, so the orchestrator can only reach agents the
+# end user may call — the owner/group predicate applies transitively and no
+# privilege is amplified.
+caller_token_var: ContextVar[str] = ContextVar("agentplane_caller_token", default="")
+
 
 class FlowState(TypedDict):
     """LangGraph state: values keyed by 'node_id.port', plus the nodes that ran."""
@@ -101,6 +117,7 @@ class ExecutionContext:
     flow_name: str = ""
     flow_version: int = 0
     extra_attributes: dict[str, str] = field(default_factory=dict)
+    agents: AgentDirectory | None = None
 
 
 def _as_text(value: PortValue) -> str:
@@ -421,7 +438,7 @@ class FlowRunner:
         if not model:
             raise FlowError(f"node {node.id!r}: no model configured (node or resource default)")
 
-        tool_schemas, targets = await self._agent_tools(config.tools)
+        tool_schemas, targets, agent_targets = await self._agent_tools(config)
         messages: list[dict[str, object]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -435,8 +452,12 @@ class FlowRunner:
             if not isinstance(calls, list) or not calls:
                 final_text = str(message.get("content") or "")
                 break
-            for call in calls:
-                content = await self._call_agent_tool(call, targets)
+            # One turn's tool calls run concurrently — an orchestrator asking
+            # several sub-agents pays only the slowest one, not the sum.
+            contents = await asyncio.gather(
+                *(self._call_agent_tool(call, targets, agent_targets) for call in calls)
+            )
+            for call, content in zip(calls, contents, strict=True):
                 call_id = call.get("id", "") if isinstance(call, dict) else ""
                 messages.append({"role": "tool", "tool_call_id": str(call_id), "content": content})
         else:
@@ -445,26 +466,63 @@ class FlowRunner:
             final_text = str(message.get("content") or "")
         return {f"{node.id}.text": final_text}
 
+    async def _sub_agent_tools(
+        self, config: AgentNodeConfig
+    ) -> tuple[list[dict[str, object]], dict[str, ResolvedAgent]]:
+        """One tool per referenced registry agent; description from its card."""
+        schemas: list[dict[str, object]] = []
+        agent_targets: dict[str, ResolvedAgent] = {}
+        for ref in config.agents:
+            if self._context.agents is None:
+                raise FlowError("agent references require a configured registry")
+            resolved = await self._context.agents.resolve(ref.name)
+            tool_name = f"agent-{resolved.name}"
+            description = resolved.description or f"Delegate to the {resolved.name} agent."
+            if resolved.examples:
+                description += " Example requests: " + "; ".join(resolved.examples[:3])
+            agent_targets[tool_name] = resolved
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "The request to send to this agent.",
+                                }
+                            },
+                            "required": ["message"],
+                        },
+                    },
+                }
+            )
+        return schemas, agent_targets
+
     async def _agent_tools(
-        self, refs: Sequence[AgentToolRef]
-    ) -> tuple[list[dict[str, object]], dict[str, _ToolTarget]]:
-        """Resolve tool refs to OpenAI tool schemas + a name -> target map."""
-        if not refs:
-            return [], {}
+        self, config: AgentNodeConfig
+    ) -> tuple[list[dict[str, object]], dict[str, _ToolTarget], dict[str, ResolvedAgent]]:
+        """Resolve tool + sub-agent refs to OpenAI tool schemas and target maps."""
+        schemas, agent_targets = await self._sub_agent_tools(config)
+        targets: dict[str, _ToolTarget] = {}
+
+        if not config.tools:
+            return schemas, targets, agent_targets
         from fastmcp import Client  # noqa: PLC0415 - deferred: heavy import
 
         wanted: dict[str, set[str] | None] = {}  # None = every tool on that server
-        for ref in refs:
-            if not ref.tool:
-                wanted[ref.resource] = None
+        for tool_ref in config.tools:
+            if not tool_ref.tool:
+                wanted[tool_ref.resource] = None
             else:
-                existing = wanted.get(ref.resource, set())
+                existing = wanted.get(tool_ref.resource, set())
                 if existing is not None:
-                    existing.add(ref.tool)
-                    wanted[ref.resource] = existing
+                    existing.add(tool_ref.tool)
+                    wanted[tool_ref.resource] = existing
 
-        schemas: list[dict[str, object]] = []
-        targets: dict[str, _ToolTarget] = {}
         for resource_name, only in wanted.items():
             resource = await self._context.resources.get_raw(resource_name)
             if not isinstance(resource, McpServerResource):
@@ -478,6 +536,8 @@ class FlowRunner:
             for tool in available:
                 if only is not None and tool.name not in only:
                     continue
+                if tool.name in agent_targets:
+                    continue  # sub-agent tools keep their name; skip the MCP shadow
                 targets[tool.name] = _ToolTarget(url=resource.url, auth=auth, tool=tool.name)
                 schemas.append(
                     {
@@ -489,16 +549,16 @@ class FlowRunner:
                         },
                     }
                 )
-        return schemas, targets
+        return schemas, targets, agent_targets
 
-    async def _call_agent_tool(self, call: object, targets: dict[str, _ToolTarget]) -> str:
-        from fastmcp import Client  # noqa: PLC0415 - deferred: heavy import
-
+    async def _call_agent_tool(
+        self,
+        call: object,
+        targets: dict[str, _ToolTarget],
+        agent_targets: dict[str, ResolvedAgent],
+    ) -> str:
         function = call.get("function") if isinstance(call, dict) else None
-        name = function.get("name", "") if isinstance(function, dict) else ""
-        target = targets.get(str(name))
-        if target is None:
-            return f"error: unknown tool {name!r}"
+        name = str(function.get("name", "")) if isinstance(function, dict) else ""
         raw_args = function.get("arguments", "{}") if isinstance(function, dict) else "{}"
         try:
             arguments = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
@@ -506,10 +566,89 @@ class FlowRunner:
             arguments = {}
         if not isinstance(arguments, dict):
             arguments = {}
+
+        agent = agent_targets.get(name)
+        if agent is not None:
+            return await self._call_a2a_agent(agent, _as_text(arguments.get("message") or ""))
+
+        target = targets.get(name)
+        if target is None:
+            return f"error: unknown tool {name!r}"
+        from fastmcp import Client  # noqa: PLC0415 - deferred: heavy import
+
         client = Client(target.url, auth=target.auth) if target.auth else Client(target.url)
         async with client:
             result = await client.call_tool(target.tool, arguments)
         return _as_text(_tool_result_to_json(result))
+
+    async def _call_a2a_agent(self, agent: ResolvedAgent, message: str) -> str:
+        """Delegate one request to a registry agent over A2A (through the gateway).
+
+        Returns the sub-agent's final artifact text; failures come back as
+        ``error: ...`` tool results so the orchestrating model can react. The
+        call depth travels in the message metadata and is enforced on receipt
+        by every runtime — the sender-side check just saves a doomed call.
+        """
+        from uuid import uuid4  # noqa: PLC0415 - deferred with its sole consumer
+
+        from a2a.client import ClientConfig, ClientFactory, minimal_agent_card  # noqa: PLC0415
+        from a2a.types.a2a_pb2 import (  # noqa: PLC0415 - deferred: heavy import
+            Message,
+            Part,
+            Role,
+            SendMessageRequest,
+            TaskState,
+        )
+
+        depth = _call_depth_var.get() + 1
+        if depth > self._context.settings.max_agent_call_depth:
+            return (
+                f"error: agent call depth limit "
+                f"({self._context.settings.max_agent_call_depth}) exceeded"
+            )
+        headers: dict[str, str] = {}
+        # Propagate the active trace (SPEC §12): the sub-agent's flow span joins
+        # this trace, so a multi-agent chain reads as ONE trace end to end.
+        propagate.inject(headers)
+        if token := caller_token_var.get():
+            headers["Authorization"] = f"Bearer {token}"
+        outgoing = Message(message_id=str(uuid4()), role=Role.ROLE_USER, parts=[Part(text=message)])
+        outgoing.metadata.update({CALL_DEPTH_METADATA_KEY: depth})
+
+        final_task = None
+        reply_text = ""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._context.settings.http_timeout_s,
+                headers=headers,
+                follow_redirects=True,
+            ) as http_client:
+                factory = ClientFactory(ClientConfig(streaming=False, httpx_client=http_client))
+                # The JSON-RPC route lives at "/" under the endpoint prefix;
+                # the slash avoids a 307 from the serving router.
+                card = minimal_agent_card(agent.url.rstrip("/") + "/", ["JSONRPC"])
+                client = factory.create(card)
+                async for event in client.send_message(SendMessageRequest(message=outgoing)):
+                    if event.HasField("task"):
+                        final_task = event.task
+                    elif event.HasField("message"):
+                        reply_text = "".join(p.text for p in event.message.parts if p.text)
+        except Exception as exc:
+            return f"error: agent {agent.name!r} unreachable: {exc}"
+
+        if final_task is None:
+            return reply_text or f"error: agent {agent.name!r} returned no result"
+        if final_task.status.state == TaskState.TASK_STATE_COMPLETED:
+            return "".join(
+                part.text
+                for artifact in final_task.artifacts
+                for part in artifact.parts
+                if part.text
+            )
+        state_name = TaskState.Name(final_task.status.state)
+        status_text = "".join(p.text for p in final_task.status.message.parts if p.text)
+        detail = f": {status_text}" if status_text else ""
+        return f"error: agent {agent.name!r} ended in {state_name}{detail}"
 
     async def execute(
         self,
@@ -518,19 +657,24 @@ class FlowRunner:
         stream: StreamCallback | None = None,
         trace_attributes: Mapping[str, str] | None = None,
         conversation: Sequence[ConversationTurn] | None = None,
+        call_depth: int = 0,
     ) -> PortValue:
         """Run the flow; returns the value of the end node's output.
 
         ``trace_attributes`` are added to the flow span — the caller's user
         and conversation attribution (`user.id`, `session.id`, SPEC §12).
         ``conversation`` is the caller's prior turns; LLM nodes with
-        ``history: true`` prepend them as chat messages.
+        ``history: true`` prepend them as chat messages. ``call_depth`` is the
+        orchestration depth of the incoming request (from the A2A message
+        metadata); outgoing sub-agent calls carry ``call_depth + 1``.
         """
         token = _stream_var.set(stream)
         conversation_token = _conversation_var.set(tuple(conversation or ()))
+        depth_token = _call_depth_var.set(call_depth)
         try:
             return await self._execute(start_values, trace_attributes or {})
         finally:
+            _call_depth_var.reset(depth_token)
             _conversation_var.reset(conversation_token)
             _stream_var.reset(token)
 
@@ -603,11 +747,67 @@ def _is_empty(value: PortValue | None) -> bool:
     return False
 
 
+def _resolve_path(value: PortValue | None, path: str) -> PortValue | None:
+    """Follow a dot path into dicts (and numeric segments into lists); miss -> None."""
+    # `object` because list elements widen the union (e.g. Document in a list);
+    # every reachable value is still a valid port value.
+    current: object = value
+    for segment in path.split("."):
+        if isinstance(current, dict):
+            current = current.get(segment)
+        elif isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+        else:
+            return None
+    return cast("PortValue | None", current)
+
+
+def _is_number(value: object) -> TypeGuard[int | float]:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _compare_numeric(when: str, target: float, operand: float) -> bool:
+    match when:
+        case "gt":
+            return target > operand
+        case "gte":
+            return target >= operand
+        case "lt":
+            return target < operand
+        case _:
+            return target <= operand
+
+
+def _rule_matches(rule: RouterRule, value: PortValue | None) -> bool:  # noqa: PLR0911
+    """One condition against the (path-resolved) input value."""
+    target = _resolve_path(value, rule.path) if rule.path else value
+    match rule.when:
+        case "empty":
+            return _is_empty(target)
+        case "not_empty":
+            return not _is_empty(target)
+        case "equals":
+            return target == rule.value
+        case "not_equals":
+            return target != rule.value
+        case "contains":
+            if isinstance(target, str) and isinstance(rule.value, str):
+                return rule.value in target
+            if isinstance(target, list):
+                return rule.value in target
+            if isinstance(target, dict) and isinstance(rule.value, str):
+                return rule.value in target
+            return False
+        case _:
+            if _is_number(target) and _is_number(rule.value):
+                return _compare_numeric(rule.when, float(target), float(rule.value))
+            return False
+
+
 def _route(config: RouterNodeConfig, value: PortValue | None) -> str:
     """First matching rule wins; otherwise the default branch."""
     for rule in config.rules:
-        matched = _is_empty(value) if rule.when == "empty" else not _is_empty(value)
-        if matched:
+        if _rule_matches(rule, value):
             return rule.branch
     return config.default_branch
 
@@ -639,10 +839,12 @@ def _tool_result_to_json(result: object) -> JsonValue:
 
 
 __all__ = [
+    "CALL_DEPTH_METADATA_KEY",
     "ExecutionContext",
     "FlowError",
     "FlowRunner",
     "FlowState",
     "PortValue",
     "StreamCallback",
+    "caller_token_var",
 ]

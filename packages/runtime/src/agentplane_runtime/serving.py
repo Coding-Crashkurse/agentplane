@@ -55,7 +55,15 @@ from agentplane_core import (
     single_required_string_input,
 )
 from agentplane_runtime.auth import AccessScope, Authenticator
-from agentplane_runtime.engine import ConversationTurn, ExecutionContext, FlowRunner, _as_text
+from agentplane_runtime.directory import AgentDirectory
+from agentplane_runtime.engine import (
+    CALL_DEPTH_METADATA_KEY,
+    ConversationTurn,
+    ExecutionContext,
+    FlowRunner,
+    _as_text,
+    caller_token_var,
+)
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.settings import EPHEMERAL_TTL_S, RuntimeSettings
 
@@ -174,10 +182,21 @@ class FlowAgentExecutor(AgentExecutor):
         runner_factory: Callable[[], FlowRunner],
         defn: FlowDefinition,
         task_store: TaskStore | None = None,
+        max_call_depth: int = 5,
     ) -> None:
         self._runner_factory = runner_factory
         self._defn = defn
         self._task_store = task_store
+        self._max_call_depth = max_call_depth
+
+    def _incoming_call_depth(self, context: RequestContext) -> int:
+        """Orchestration depth carried in the A2A message metadata (0 = direct)."""
+        if context.message is None:
+            return 0
+        fields = context.message.metadata.fields
+        if CALL_DEPTH_METADATA_KEY not in fields:
+            return 0
+        return int(fields[CALL_DEPTH_METADATA_KEY].number_value)
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or ""
@@ -200,6 +219,18 @@ class FlowAgentExecutor(AgentExecutor):
             trace.get_current_span().set_attribute("session.id", context_id)
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
+
+        # Recursion guard for orchestrator chains (A calls B calls A ...):
+        # every runtime enforces the limit on receipt, so a loop dies at the
+        # perimeter no matter which runtime started it.
+        call_depth = self._incoming_call_depth(context)
+        if call_depth > self._max_call_depth:
+            await updater.failed(
+                updater.new_agent_message(
+                    [Part(text=f"agent call depth limit ({self._max_call_depth}) exceeded")]
+                )
+            )
+            return
 
         async def stream_chunk(delta: str) -> None:
             await updater.update_status(
@@ -233,6 +264,7 @@ class FlowAgentExecutor(AgentExecutor):
                 stream=stream_chunk,
                 trace_attributes=trace_attributes,
                 conversation=conversation,
+                call_depth=call_depth,
             )
         except ValueError as exc:
             await updater.failed(updater.new_agent_message([Part(text=str(exc))]))
@@ -257,6 +289,7 @@ def build_a2a_app(
     runner_factory: Callable[[], FlowRunner],
     version: str = "1",
     task_store: TaskStore | None = None,
+    max_call_depth: int = 5,
 ) -> Starlette:
     """One Starlette app per A2A-exposed flow: card + JSON-RPC routes.
 
@@ -270,7 +303,9 @@ def build_a2a_app(
     # the conversation's prior turns (works for the in-memory store too).
     store = task_store or InMemoryTaskStore()
     handler = DefaultRequestHandler(
-        agent_executor=FlowAgentExecutor(runner_factory, defn, task_store=store),
+        agent_executor=FlowAgentExecutor(
+            runner_factory, defn, task_store=store, max_call_depth=max_call_depth
+        ),
         task_store=store,
         agent_card=card,
     )
@@ -429,6 +464,11 @@ class EndpointGuard:
         # better in tracing UIs; the subject is the fallback identity.
         trace.get_current_span().set_attribute("user.id", principal.username or principal.sub)
         _caller_display.set(principal.username or principal.sub)
+        # Keep the raw token for delegation: orchestrator sub-agent calls act
+        # on behalf of this caller (engine.caller_token_var), so the callee's
+        # own EndpointGuard authorizes the end user, not the runtime.
+        _, _, bearer = request.headers.get("Authorization", "").partition(" ")
+        caller_token_var.set(bearer)
         # Expose the caller to the a2a app (SPEC §6.5): the task store scopes
         # persisted conversations by this user (StarletteUser reads
         # display_name).
@@ -491,11 +531,13 @@ class EndpointManager:
         settings: RuntimeSettings,
         authenticator: Authenticator | None = None,
         engine: AsyncEngine | None = None,
+        directory: AgentDirectory | None = None,
     ) -> None:
         self._resources = resources
         self._settings = settings
         self._authenticator = authenticator or Authenticator(settings)
         self._engine = engine
+        self._directory = directory
         self.a2a = PathDispatcher()
         self.mcp = PathDispatcher()
         self._endpoints: dict[str, Endpoint] = {}
@@ -534,6 +576,7 @@ class EndpointManager:
                             settings=self._settings,
                             flow_name=defn.name,
                             flow_version=version,
+                            agents=self._directory,
                         ),
                     )
                 )
@@ -582,6 +625,7 @@ class EndpointManager:
                 runner_factory,
                 version_label or str(version),
                 task_store=None if ephemeral else self._persistent_task_store(defn.name),
+                max_call_depth=self._settings.max_agent_call_depth,
             )
             self.a2a.mount(
                 key,

@@ -1,5 +1,22 @@
 {
   "$defs": {
+    "A2aAgentRef": {
+      "additionalProperties": false,
+      "description": "One sub-agent an orchestrator may call, referenced by registry card name.\n\nOnly A2A agents already registered in the platform registry can be\nreferenced \u2014 the runtime resolves the name to the agent's gateway URL, so\ndelegated calls stay authenticated, rate-limited, and traced. URLs never\nappear in definitions (they are environment-specific; names are not).",
+      "properties": {
+        "name": {
+          "description": "Registry card name of a deployed A2A agent",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "A2aAgentRef",
+      "type": "object"
+    },
     "AgentNode": {
       "additionalProperties": false,
       "properties": {
@@ -33,8 +50,16 @@
     },
     "AgentNodeConfig": {
       "additionalProperties": false,
-      "description": "LLM + tool loop (v1.1): the model calls MCP tools until it answers.\n\nThe prompt's ``{vars}`` become input ports (like ``llm_call``). Each turn the\nmodel may emit tool calls (OpenAI tool-calling); the runtime runs them via\nMCP and feeds the results back, up to ``max_iterations``, then returns the\nfinal assistant text.",
+      "description": "LLM + tool loop (v1.1): the model calls MCP tools until it answers.\n\nThe prompt's ``{vars}`` become input ports (like ``llm_call``). Each turn the\nmodel may emit tool calls (OpenAI tool-calling); the runtime runs them via\nMCP and feeds the results back, up to ``max_iterations``, then returns the\nfinal assistant text.\n\n``agents`` turns the node into an orchestrator: each referenced registry\nagent is offered to the model as an additional tool whose description comes\nfrom the agent's card; a call is delegated over A2A through the gateway.",
       "properties": {
+        "agents": {
+          "description": "A2A agents (registry card names) the model may delegate to; resolved through the registry, called through the gateway.",
+          "items": {
+            "$ref": "#/$defs/A2aAgentRef"
+          },
+          "title": "Agents",
+          "type": "array"
+        },
         "max_iterations": {
           "default": 6,
           "description": "Cap on tool-call turns before forcing a final answer.",
@@ -640,17 +665,35 @@
     },
     "RouterRule": {
       "additionalProperties": false,
-      "description": "One branch condition, evaluated in order; first match wins.",
+      "description": "One branch condition, evaluated in order; first match wins.\n\n``path`` (dot notation, JSON inputs only) selects the value under test \u2014\nempty means the whole input. ``equals``/``not_equals`` compare it to\n``value``; ``contains`` is substring/membership/key test; ``gt``/``gte``/\n``lt``/``lte`` compare numerically. A missing path resolves to null: it\nmatches ``empty`` and never matches a comparison.",
       "properties": {
         "branch": {
           "pattern": "^[a-z][a-z0-9_]*$",
           "title": "Branch",
           "type": "string"
         },
+        "path": {
+          "default": "",
+          "description": "Dot path into a JSON input selecting the value under test; empty = input.",
+          "title": "Path",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null,
+          "description": "Comparison operand; required for every condition except empty/not_empty."
+        },
         "when": {
           "enum": [
             "not_empty",
-            "empty"
+            "empty",
+            "equals",
+            "not_equals",
+            "contains",
+            "gt",
+            "gte",
+            "lt",
+            "lte"
           ],
           "title": "When",
           "type": "string"

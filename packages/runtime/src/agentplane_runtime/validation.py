@@ -1,9 +1,9 @@
-"""Stateful validation (SPEC §3.7): core checks + E020/E021/E022/W001.
+"""Stateful validation (SPEC §3.7): core checks + E020/E021/E022/E061/E062/W001/W004.
 
 The runtime's answer (``POST /definitions/validate``) is authoritative; it
 runs ``agentplane_core.validation.validate_structure`` first — literally the
 same code the builder uses locally — and adds the checks that need runtime
-state (resources, dimensions, deprecations).
+state (resources, dimensions, deprecations, registry agent references).
 """
 
 from __future__ import annotations
@@ -24,6 +24,11 @@ from agentplane_core import (
     validate_structure,
 )
 from agentplane_core.resources import VECTOR_DB_KINDS
+from agentplane_runtime.directory import (
+    AgentDirectory,
+    AgentNotFoundError,
+    AgentResolutionError,
+)
 from agentplane_runtime.resources import ResourceNotFoundError, ResourceService
 
 _EXPECTED_KINDS = {
@@ -63,10 +68,57 @@ async def _agent_tool_issues(node: AgentNode, resources: ResourceService) -> lis
     return issues
 
 
+async def agent_reference_issues(
+    defn: FlowDefinition, agents: AgentDirectory | None
+) -> list[ValidationIssue]:
+    """E061/E062 for every sub-agent reference of the flow's agent nodes.
+
+    Also called on deploy (fail-fast): a reference that validated against the
+    registry at draft time may have been undeployed or disabled since.
+    """
+    issues: list[ValidationIssue] = []
+    for node in defn.nodes:
+        if not isinstance(node, AgentNode) or not node.config.agents:
+            continue
+        for index, ref in enumerate(node.config.agents):
+            path = f"nodes/{node.id}/config/agents/{index}/name"
+            if agents is None or not agents.enabled:
+                issues.append(
+                    _issue("E061", "error", path, "agent references require a configured registry")
+                )
+                continue
+            try:
+                resolved = await agents.resolve(ref.name)
+            except AgentNotFoundError:
+                issues.append(
+                    _issue(
+                        "E062",
+                        "error",
+                        path,
+                        f"no enabled A2A agent {ref.name!r} in the registry",
+                    )
+                )
+            except AgentResolutionError as exc:
+                issues.append(_issue("E061", "error", path, str(exc)))
+            else:
+                if resolved.status == "unhealthy":
+                    issues.append(
+                        _issue(
+                            "W004",
+                            "warning",
+                            path,
+                            f"agent {ref.name!r} is currently unhealthy",
+                        )
+                    )
+    return issues
+
+
 async def validate_full(
-    defn: FlowDefinition | Mapping[str, object], resources: ResourceService
+    defn: FlowDefinition | Mapping[str, object],
+    resources: ResourceService,
+    agents: AgentDirectory | None = None,
 ) -> ValidationResult:
-    """Structural checks (core) + resource/dimension/deprecation checks."""
+    """Structural checks (core) + resource/dimension/deprecation/agent-ref checks."""
     issues = list(validate_structure(defn))
     if any(i.severity == "error" for i in issues):
         return ValidationResult.from_issues(issues)
@@ -116,7 +168,8 @@ async def validate_full(
         if isinstance(node, AgentNode):
             issues.extend(await _agent_tool_issues(node, resources))
 
+    issues.extend(await agent_reference_issues(parsed, agents))
     return ValidationResult.from_issues(issues)
 
 
-__all__ = ["validate_full"]
+__all__ = ["agent_reference_issues", "validate_full"]

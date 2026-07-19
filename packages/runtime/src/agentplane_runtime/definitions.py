@@ -26,10 +26,11 @@ from agentplane_runtime.db import (
     version_row,
     version_row_by_label,
 )
+from agentplane_runtime.directory import AgentDirectory
 from agentplane_runtime.registration import RegistryRegistrar
 from agentplane_runtime.resources import ResourceService
 from agentplane_runtime.serving import EndpointManager
-from agentplane_runtime.validation import validate_full
+from agentplane_runtime.validation import agent_reference_issues, validate_full
 
 
 class DefinitionNotFoundError(Exception):
@@ -84,16 +85,18 @@ class DefinitionService:
         endpoints: EndpointManager,
         registrar: RegistryRegistrar,
         *,
+        directory: AgentDirectory | None = None,
         max_deployments_per_owner: int = 0,
     ) -> None:
         self._db = db
         self._resources = resources
         self._endpoints = endpoints
         self._registrar = registrar
+        self._directory = directory
         self._max_deployments_per_owner = max_deployments_per_owner
 
     async def validate(self, defn: FlowDefinition | dict[str, object]) -> ValidationResult:
-        return await validate_full(defn, self._resources)
+        return await validate_full(defn, self._resources, self._directory)
 
     async def _row(self, name: str, scope: AccessScope | None = None) -> DefinitionRow:
         """Fetch a definition, enforcing access when ``scope`` is set.
@@ -189,6 +192,12 @@ class DefinitionService:
         else:
             defn, active_label = await self._load_version_row(name, version)
             active_version = version
+
+        # Fail fast on registry drift: a sub-agent reference that validated at
+        # draft time may have been undeployed or disabled since.
+        ref_issues = await agent_reference_issues(defn, self._directory)
+        if any(issue.severity == "error" for issue in ref_issues):
+            raise DefinitionInvalidError(ValidationResult.from_issues(ref_issues))
 
         endpoint = await self._endpoints.start(
             defn,

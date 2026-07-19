@@ -44,6 +44,10 @@ class RuntimeSettings(BaseSettings):
     admin_role: str = "admin"
     builder_role: str = "builder"  # role required for definition/resource writes (SPEC §7.1)
     http_timeout_s: float = 60.0
+    # Recursion guard for orchestrators: an agent may call an agent (over A2A),
+    # which may call another. The depth travels in the A2A message metadata;
+    # requests deeper than this fail instead of looping A -> B -> A forever.
+    max_agent_call_depth: int = 5
     host: str = "0.0.0.0"
     port: int = 8000
     # A2A task persistence (SPEC §6.5): "database" stores tasks in db_url

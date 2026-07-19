@@ -1,0 +1,46 @@
+# Router comparison rules: missing operand (E010), non-numeric operand for a
+# numeric condition (E011), and a path on a text input (E011).
+expected_codes: [E010, E011]
+definition:
+  schema_version: 1
+  name: bad-router-rules
+  expose:
+    kind: a2a
+  nodes:
+    - id: start_1
+      type: start
+      version: 1
+      config:
+        input_schema:
+          type: object
+          properties:
+            message:
+              type: string
+          required: [message]
+    - id: route_1
+      type: router
+      version: 1
+      config:
+        input_type: text
+        rules:
+          - when: equals
+            branch: a
+          - when: gt
+            value: high
+            branch: b
+          - when: contains
+            path: category
+            value: x
+            branch: c
+        default_branch: otherwise
+    - id: end_1
+      type: end
+      version: 1
+      config:
+        output_from: ""
+  edges:
+    - { from: start_1.message, to: route_1.input }
+    - { from: route_1.a, to: end_1.input }
+    - { from: route_1.b, to: end_1.input }
+    - { from: route_1.c, to: end_1.input }
+    - { from: route_1.otherwise, to: end_1.input }

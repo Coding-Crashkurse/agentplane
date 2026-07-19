@@ -1,0 +1,54 @@
+# An orchestrator (v1.1): an agent that delegates to other A2A agents that are
+# already registered in the platform registry — referenced by card name only,
+# never by URL. The runtime resolves each name through the registry to the
+# agent's gateway URL, so delegated calls stay authenticated, rate-limited,
+# and traced; the caller's token is forwarded, so the orchestrator can only
+# reach agents the end user may call. MCP tools and sub-agents mix freely.
+schema_version: 1
+name: support-orchestrator
+display_name: "Support Orchestrator"
+description: "Routes support requests to the right specialist agent"
+tags: [agent, orchestrator]
+expose:
+  kind: a2a
+  examples:
+    - "My invoice from May is wrong"
+    - "Summarize the latest research on vector databases"
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          request:
+            type: string
+        required: [request]
+  - id: agent_1
+    type: agent
+    version: 1
+    config:
+      resource: default-llm
+      model: gpt-5-mini
+      system_prompt: >-
+        Delegate to a specialist agent when the request matches its expertise;
+        answer directly otherwise.
+      prompt: "{request}"
+      agents:
+        - name: support-rag
+        - name: research-agent
+      max_iterations: 4
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: agent_1.text
+edges:
+  - { from: start_1.request, to: agent_1.request }
+  - { from: agent_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 80, y: 300 }
+    agent_1: { x: 360, y: 300 }
+    end_1: { x: 640, y: 300 }

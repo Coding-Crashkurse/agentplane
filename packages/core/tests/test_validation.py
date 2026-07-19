@@ -148,6 +148,93 @@ def test_e050_mcp_without_tool_name() -> None:
     assert ("E050", "expose/tool_name") in _codes(defn)
 
 
+def _text_router(rule: dict[str, Any], input_type: str = "text") -> dict[str, Any]:
+    """Echo flow with a router between start and end carrying one rule."""
+    defn = _echo()
+    defn["nodes"].append(
+        {
+            "id": "route_1",
+            "type": "router",
+            "version": 1,
+            "config": {"input_type": input_type, "rules": [rule], "default_branch": "otherwise"},
+        }
+    )
+    defn["edges"] = [
+        {"from": "start_1.message", "to": "route_1.input"},
+        {"from": "route_1.hit", "to": "call_1.message"},
+        {"from": "route_1.otherwise", "to": "call_1.message"},
+        {"from": "call_1.text", "to": "end_1.input"},
+    ]
+    return defn
+
+
+def test_e010_router_comparison_requires_value() -> None:
+    defn = _text_router({"when": "equals", "branch": "hit"})
+    assert ("E010", "nodes/route_1/config/rules/0/value") in _codes(defn)
+
+
+def test_e011_router_numeric_condition_needs_number() -> None:
+    defn = _text_router({"when": "gt", "value": "high", "branch": "hit"}, input_type="json")
+    assert ("E011", "nodes/route_1/config/rules/0/value") in _codes(defn)
+
+
+def test_e011_router_path_requires_json_input() -> None:
+    defn = _text_router({"when": "equals", "path": "category", "value": "x", "branch": "hit"})
+    assert ("E011", "nodes/route_1/config/rules/0/path") in _codes(defn)
+
+
+def test_e011_router_documents_reject_comparisons() -> None:
+    defn = _text_router({"when": "equals", "value": "x", "branch": "hit"}, input_type="documents")
+    assert ("E011", "nodes/route_1/config/rules/0/when") in _codes(defn)
+
+
+def test_e011_router_emptiness_takes_no_value() -> None:
+    defn = _text_router({"when": "not_empty", "value": "x", "branch": "hit"})
+    assert ("E011", "nodes/route_1/config/rules/0/value") in _codes(defn)
+
+
+def test_router_json_comparison_rules_are_valid() -> None:
+    defn = _text_router(
+        {"when": "equals", "path": "category", "value": "billing", "branch": "hit"},
+        input_type="json",
+    )
+    errors = [i for i in validate_structure(defn) if i.severity == "error"]
+    assert not errors, errors
+
+
+def _orchestrator(agents: list[dict[str, Any]]) -> dict[str, Any]:
+    defn = _echo()
+    defn["nodes"].append(
+        {
+            "id": "agent_1",
+            "type": "agent",
+            "version": 1,
+            "config": {"resource": "default-llm", "prompt": "{q}", "agents": agents},
+        }
+    )
+    defn["edges"] = [
+        {"from": "start_1.message", "to": "agent_1.q"},
+        {"from": "agent_1.text", "to": "end_1.input"},
+    ]
+    return defn
+
+
+def test_e060_agent_self_reference() -> None:
+    defn = _orchestrator([{"name": "echo-agent"}])
+    assert ("E060", "nodes/agent_1/config/agents/0/name") in _codes(defn)
+
+
+def test_e011_duplicate_agent_reference() -> None:
+    defn = _orchestrator([{"name": "helper"}, {"name": "helper"}])
+    assert ("E011", "nodes/agent_1/config/agents/1/name") in _codes(defn)
+
+
+def test_agent_references_are_valid_structurally() -> None:
+    defn = _orchestrator([{"name": "helper"}, {"name": "researcher"}])
+    errors = [i for i in validate_structure(defn) if i.severity == "error"]
+    assert not errors, errors
+
+
 def test_w002_unused_node() -> None:
     defn = _echo()
     defn["nodes"].append(

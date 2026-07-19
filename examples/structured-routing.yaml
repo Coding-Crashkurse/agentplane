@@ -1,0 +1,91 @@
+# Deterministic if/else on structured output (v1.1): the LLM classifies the
+# ticket into a JSON schema (enum property), the router compares the field
+# with `equals` — routing is then deterministic, not a second LLM guess.
+# Comparison rules (`equals`, `not_equals`, `contains`, `gt`, ...) take a dot
+# `path` into the JSON input; the first matching rule wins.
+schema_version: 1
+name: ticket-triage
+display_name: "Ticket Triage"
+description: "Classifies a support ticket and routes it deterministically"
+tags: [routing, structured-output]
+expose:
+  kind: a2a
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          ticket:
+            type: string
+        required: [ticket]
+  - id: classify_1
+    type: llm_call
+    version: 1
+    config:
+      resource: default-llm
+      model: ""
+      prompt: "Classify this support ticket: {ticket}"
+      system_prompt: "You are a precise ticket classifier."
+      structured_output:
+        type: object
+        properties:
+          category:
+            type: string
+            enum: [billing, technical, other]
+        required: [category]
+  - id: route_1
+    type: router
+    version: 1
+    config:
+      input_type: json
+      rules:
+        - when: equals
+          path: category
+          value: billing
+          branch: billing
+        - when: equals
+          path: category
+          value: technical
+          branch: technical
+      default_branch: other
+  - id: billing_1
+    type: template
+    version: 1
+    config:
+      text: "Your billing request was forwarded to billing@example.com."
+  - id: technical_1
+    type: template
+    version: 1
+    config:
+      text: "A technical support engineer will look into your ticket."
+  - id: other_1
+    type: template
+    version: 1
+    config:
+      text: "Thanks! Your request was forwarded to our support team."
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: ""
+edges:
+  - { from: start_1.ticket, to: classify_1.ticket }
+  - { from: classify_1.json, to: route_1.input }
+  - { from: route_1.billing, to: billing_1.trigger }
+  - { from: route_1.technical, to: technical_1.trigger }
+  - { from: route_1.other, to: other_1.trigger }
+  - { from: billing_1.text, to: end_1.input }
+  - { from: technical_1.text, to: end_1.input }
+  - { from: other_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 60, y: 300 }
+    classify_1: { x: 300, y: 300 }
+    route_1: { x: 560, y: 300 }
+    billing_1: { x: 820, y: 140 }
+    technical_1: { x: 820, y: 300 }
+    other_1: { x: 820, y: 460 }
+    end_1: { x: 1080, y: 300 }

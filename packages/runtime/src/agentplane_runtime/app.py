@@ -15,6 +15,7 @@ from agentplane_runtime.api import RuntimeState, health_router, router
 from agentplane_runtime.auth import Authenticator
 from agentplane_runtime.db import Database
 from agentplane_runtime.definitions import DefinitionService
+from agentplane_runtime.directory import AgentDirectory
 from agentplane_runtime.migrate import run_migrations
 from agentplane_runtime.registration import RegistryRegistrar
 from agentplane_runtime.resources import ResourceService
@@ -39,13 +40,17 @@ def create_app(settings: RuntimeSettings | None = None) -> FastAPI:
     secrets = make_secrets_provider(cfg, db)
     resources = ResourceService(db, secrets)
     authenticator = Authenticator(cfg)
-    endpoints = EndpointManager(resources, cfg, authenticator, engine=db.engine)
+    directory = AgentDirectory(cfg)
+    endpoints = EndpointManager(
+        resources, cfg, authenticator, engine=db.engine, directory=directory
+    )
     registrar = RegistryRegistrar(cfg)
     definitions = DefinitionService(
         db,
         resources,
         endpoints,
         registrar,
+        directory=directory,
         max_deployments_per_owner=cfg.max_deployments_per_owner,
     )
 
