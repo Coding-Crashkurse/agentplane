@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select
 
 from agentplane_core import (
+    AgentNode,
     FlowDefinition,
     LlmCallNode,
     McpToolNode,
@@ -262,6 +263,11 @@ def _references(defn: FlowDefinition, resource_name: str) -> bool:
                     return True
             case McpToolNode():
                 if node.config.resource == resource_name:
+                    return True
+            case AgentNode():
+                if node.config.resource == resource_name or any(
+                    tool.resource == resource_name for tool in node.config.tools
+                ):
                     return True
             case _:
                 pass

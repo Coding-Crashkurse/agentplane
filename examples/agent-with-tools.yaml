@@ -1,0 +1,45 @@
+# An agent (v1.1): an LLM that calls MCP tools in a loop until it answers.
+# The prompt's {question} is an input port; tools come from an MCP server
+# resource. Exposed as an A2A agent.
+schema_version: 1
+name: research-agent
+display_name: "Research Agent"
+description: "Answers questions by calling tools until it has enough to respond"
+tags: [agent, tools]
+expose:
+  kind: a2a
+nodes:
+  - id: start_1
+    type: start
+    version: 1
+    config:
+      input_schema:
+        type: object
+        properties:
+          question:
+            type: string
+        required: [question]
+  - id: agent_1
+    type: agent
+    version: 1
+    config:
+      resource: default-llm
+      model: gpt-5-mini
+      system_prompt: "You are a helpful research assistant. Use tools when useful."
+      prompt: "{question}"
+      tools:
+        - resource: kb-tools
+      max_iterations: 4
+  - id: end_1
+    type: end
+    version: 1
+    config:
+      output_from: agent_1.text
+edges:
+  - { from: start_1.question, to: agent_1.question }
+  - { from: agent_1.text, to: end_1.input }
+layout:
+  nodes:
+    start_1: { x: 80, y: 300 }
+    agent_1: { x: 360, y: 300 }
+    end_1: { x: 640, y: 300 }

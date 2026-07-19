@@ -16,6 +16,8 @@ from opentelemetry import trace
 from pydantic import JsonValue
 
 from agentplane_core import (
+    AgentNode,
+    AgentToolRef,
     Document,
     EndNode,
     FlowDefinition,
@@ -47,6 +49,15 @@ tracer = trace.get_tracer("agentplane-runtime")
 PortValue = JsonValue | list[Document]
 
 StreamCallback = Callable[[str], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class _ToolTarget:
+    """Where an agent tool call routes: an MCP server url + auth + tool name."""
+
+    url: str
+    auth: str | None
+    tool: str
 
 
 class FlowError(RuntimeError):
@@ -238,6 +249,8 @@ class FlowRunner:
                 return {f"{node.id}.output": inputs.get("input")}
             case LlmCallNode():
                 return await self._run_llm(node, inputs)
+            case AgentNode():
+                return await self._run_agent(node, inputs)
             case RetrievalNode():
                 return await self._run_retrieval(node, inputs)
             case RerankNode():
@@ -393,6 +406,110 @@ class FlowRunner:
         async with client:
             result = await client.call_tool(config.tool, arguments)
         return {f"{node.id}.result": _tool_result_to_json(result)}
+
+    async def _run_agent(
+        self, node: AgentNode, inputs: dict[str, PortValue]
+    ) -> dict[str, PortValue]:
+        config = node.config
+        rendered = {port: _as_text(value) for port, value in inputs.items()}
+        for port in input_ports(node):
+            rendered.setdefault(port, "")
+        prompt = _format_prompt(config.prompt, rendered)
+        system_prompt = _format_prompt(config.system_prompt, rendered)
+        client, default_model = await self._llm_client(config.resource)
+        model = config.model or default_model
+        if not model:
+            raise FlowError(f"node {node.id!r}: no model configured (node or resource default)")
+
+        tool_schemas, targets = await self._agent_tools(config.tools)
+        messages: list[dict[str, object]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        final_text = ""
+        for _ in range(config.max_iterations):
+            message = await client.chat_with_tools(model, messages, tool_schemas)
+            messages.append(message)
+            calls = message.get("tool_calls")
+            if not isinstance(calls, list) or not calls:
+                final_text = str(message.get("content") or "")
+                break
+            for call in calls:
+                content = await self._call_agent_tool(call, targets)
+                call_id = call.get("id", "") if isinstance(call, dict) else ""
+                messages.append({"role": "tool", "tool_call_id": str(call_id), "content": content})
+        else:
+            # ran out of tool-call turns — force one final answer without tools
+            message = await client.chat_with_tools(model, messages, [])
+            final_text = str(message.get("content") or "")
+        return {f"{node.id}.text": final_text}
+
+    async def _agent_tools(
+        self, refs: Sequence[AgentToolRef]
+    ) -> tuple[list[dict[str, object]], dict[str, _ToolTarget]]:
+        """Resolve tool refs to OpenAI tool schemas + a name -> target map."""
+        if not refs:
+            return [], {}
+        from fastmcp import Client  # noqa: PLC0415 - deferred: heavy import
+
+        wanted: dict[str, set[str] | None] = {}  # None = every tool on that server
+        for ref in refs:
+            if not ref.tool:
+                wanted[ref.resource] = None
+            else:
+                existing = wanted.get(ref.resource, set())
+                if existing is not None:
+                    existing.add(ref.tool)
+                    wanted[ref.resource] = existing
+
+        schemas: list[dict[str, object]] = []
+        targets: dict[str, _ToolTarget] = {}
+        for resource_name, only in wanted.items():
+            resource = await self._context.resources.get_raw(resource_name)
+            if not isinstance(resource, McpServerResource):
+                raise FlowError(f"resource {resource_name!r} is not an MCP server")
+            auth: str | None = None
+            if resource.auth_secret:
+                auth = await self._context.resources.secret_value(resource_name, "auth_secret")
+            client = Client(resource.url, auth=auth) if auth else Client(resource.url)
+            async with client:
+                available = await client.list_tools()
+            for tool in available:
+                if only is not None and tool.name not in only:
+                    continue
+                targets[tool.name] = _ToolTarget(url=resource.url, auth=auth, tool=tool.name)
+                schemas.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description or "",
+                            "parameters": tool.inputSchema or {"type": "object", "properties": {}},
+                        },
+                    }
+                )
+        return schemas, targets
+
+    async def _call_agent_tool(self, call: object, targets: dict[str, _ToolTarget]) -> str:
+        from fastmcp import Client  # noqa: PLC0415 - deferred: heavy import
+
+        function = call.get("function") if isinstance(call, dict) else None
+        name = function.get("name", "") if isinstance(function, dict) else ""
+        target = targets.get(str(name))
+        if target is None:
+            return f"error: unknown tool {name!r}"
+        raw_args = function.get("arguments", "{}") if isinstance(function, dict) else "{}"
+        try:
+            arguments = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except ValueError:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        client = Client(target.url, auth=target.auth) if target.auth else Client(target.url)
+        async with client:
+            result = await client.call_tool(target.tool, arguments)
+        return _as_text(_tool_result_to_json(result))
 
     async def execute(
         self,

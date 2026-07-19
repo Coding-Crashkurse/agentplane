@@ -1,5 +1,106 @@
 {
   "$defs": {
+    "AgentNode": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/AgentNodeConfig"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "agent",
+          "title": "Type",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "type",
+        "config"
+      ],
+      "title": "AgentNode",
+      "type": "object"
+    },
+    "AgentNodeConfig": {
+      "additionalProperties": false,
+      "description": "LLM + tool loop (v1.1): the model calls MCP tools until it answers.\n\nThe prompt's ``{vars}`` become input ports (like ``llm_call``). Each turn the\nmodel may emit tool calls (OpenAI tool-calling); the runtime runs them via\nMCP and feeds the results back, up to ``max_iterations``, then returns the\nfinal assistant text.",
+      "properties": {
+        "max_iterations": {
+          "default": 6,
+          "description": "Cap on tool-call turns before forcing a final answer.",
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "resource": {
+          "description": "ModelProvider resource",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "system_prompt": {
+          "default": "",
+          "title": "System Prompt",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/AgentToolRef"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "resource",
+        "prompt"
+      ],
+      "title": "AgentNodeConfig",
+      "type": "object"
+    },
+    "AgentToolRef": {
+      "additionalProperties": false,
+      "description": "One tool an agent may call: an MCP server resource, optionally narrowed.",
+      "properties": {
+        "resource": {
+          "description": "McpServer resource the tool(s) live on",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+          "title": "Resource",
+          "type": "string"
+        },
+        "tool": {
+          "default": "",
+          "description": "Specific tool name; empty = every tool the server exposes",
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource"
+      ],
+      "title": "AgentToolRef",
+      "type": "object"
+    },
     "Edge": {
       "additionalProperties": false,
       "properties": {
@@ -700,6 +801,7 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "agent": "#/$defs/AgentNode",
             "end": "#/$defs/EndNode",
             "llm_call": "#/$defs/LlmCallNode",
             "mcp_tool": "#/$defs/McpToolNode",
@@ -720,6 +822,9 @@
           },
           {
             "$ref": "#/$defs/LlmCallNode"
+          },
+          {
+            "$ref": "#/$defs/AgentNode"
           },
           {
             "$ref": "#/$defs/McpToolNode"

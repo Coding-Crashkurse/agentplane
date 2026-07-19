@@ -33,6 +33,7 @@ NODE_CATALOG: frozenset[tuple[str, int]] = frozenset(
         ("router", 1),
         ("template", 1),
         ("rerank", 1),
+        ("agent", 1),
     }
 )
 
@@ -103,6 +104,38 @@ class LlmCallNodeConfig(_StrictModel):
         ge=1,
         le=200,
         description="Cap on prior exchanges (user + assistant pairs) fed to the model.",
+    )
+
+
+class AgentToolRef(_StrictModel):
+    """One tool an agent may call: an MCP server resource, optionally narrowed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    resource: Slug = Field(description="McpServer resource the tool(s) live on")
+    tool: str = Field(
+        default="", description="Specific tool name; empty = every tool the server exposes"
+    )
+
+
+class AgentNodeConfig(_StrictModel):
+    """LLM + tool loop (v1.1): the model calls MCP tools until it answers.
+
+    The prompt's ``{vars}`` become input ports (like ``llm_call``). Each turn the
+    model may emit tool calls (OpenAI tool-calling); the runtime runs them via
+    MCP and feeds the results back, up to ``max_iterations``, then returns the
+    final assistant text.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    resource: Slug = Field(description="ModelProvider resource")
+    model: str = ""
+    prompt: str
+    system_prompt: str = ""
+    tools: list[AgentToolRef] = Field(default_factory=list)
+    max_iterations: int = Field(
+        default=6, ge=1, le=50, description="Cap on tool-call turns before forcing a final answer."
     )
 
 
@@ -221,6 +254,11 @@ class LlmCallNode(_NodeBase):
     config: LlmCallNodeConfig
 
 
+class AgentNode(_NodeBase):
+    type: Literal["agent"]
+    config: AgentNodeConfig
+
+
 class McpToolNode(_NodeBase):
     type: Literal["mcp_tool"]
     config: McpToolNodeConfig
@@ -250,6 +288,7 @@ Node = Annotated[
     StartNode
     | EndNode
     | LlmCallNode
+    | AgentNode
     | McpToolNode
     | RetrievalNode
     | RerankNode
@@ -374,6 +413,8 @@ def output_ports(node: Node) -> dict[str, PortType]:  # noqa: PLR0911 - one retu
             if node.config.structured_output is not None:
                 ports["json"] = "json"
             return ports
+        case AgentNode():
+            return {"text": "text"}
         case McpToolNode():
             return {"result": "json"}
         case RetrievalNode():
@@ -398,6 +439,11 @@ def input_ports(node: Node) -> dict[str, PortType]:  # noqa: PLR0911 - one retur
         case EndNode():
             return {"input": "text"}
         case LlmCallNode():
+            names = prompt_variables(node.config.prompt) + prompt_variables(
+                node.config.system_prompt
+            )
+            return dict.fromkeys(names, "text")
+        case AgentNode():
             names = prompt_variables(node.config.prompt) + prompt_variables(
                 node.config.system_prompt
             )
@@ -453,6 +499,9 @@ __all__ = [
     "DEPRECATED_NODE_VERSIONS",
     "NODE_CATALOG",
     "SCHEMA_VERSION",
+    "AgentNode",
+    "AgentNodeConfig",
+    "AgentToolRef",
     "Edge",
     "EndNode",
     "EndNodeConfig",

@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 from agentplane_core import (
     DEPRECATED_NODE_VERSIONS,
+    AgentNode,
     FlowDefinition,
     LlmCallNode,
     McpToolNode,
@@ -30,6 +31,7 @@ _EXPECTED_KINDS = {
     "retrieval": VECTOR_DB_KINDS,
     "mcp_tool": frozenset({"mcp_server"}),
     "rerank": frozenset({"model_provider"}),
+    "agent": frozenset({"model_provider"}),
 }
 
 
@@ -37,6 +39,28 @@ def _issue(code: str, severity: str, path: str, message: str) -> ValidationIssue
     return ValidationIssue.model_validate(
         {"code": code, "severity": severity, "path": path, "message": message}
     )
+
+
+async def _agent_tool_issues(node: AgentNode, resources: ResourceService) -> list[ValidationIssue]:
+    """E020/E021 for each of an agent's tool resources (each must be an mcp_server)."""
+    issues: list[ValidationIssue] = []
+    for index, tool in enumerate(node.config.tools):
+        path = f"nodes/{node.id}/config/tools/{index}/resource"
+        try:
+            resource = await resources.get_raw(tool.resource)
+        except ResourceNotFoundError:
+            issues.append(_issue("E020", "error", path, f"unknown resource {tool.resource!r}"))
+            continue
+        if resource.kind != "mcp_server":
+            issues.append(
+                _issue(
+                    "E021",
+                    "error",
+                    path,
+                    f"resource {tool.resource!r} has kind {resource.kind!r}; expected 'mcp_server'",
+                )
+            )
+    return issues
 
 
 async def validate_full(
@@ -59,7 +83,7 @@ async def validate_full(
                     f"node version {node.version} of {node.type!r} is deprecated",
                 )
             )
-        if not isinstance(node, LlmCallNode | RetrievalNode | McpToolNode | RerankNode):
+        if not isinstance(node, LlmCallNode | RetrievalNode | McpToolNode | RerankNode | AgentNode):
             continue
         resource_name = node.config.resource
         if resource_name is None:  # mcp_tool with direct url
@@ -88,6 +112,9 @@ async def validate_full(
             )
             if e022 is not None:
                 issues.append(e022)
+
+        if isinstance(node, AgentNode):
+            issues.extend(await _agent_tool_issues(node, resources))
 
     return ValidationResult.from_issues(issues)
 

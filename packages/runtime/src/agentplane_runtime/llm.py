@@ -155,5 +155,33 @@ class OpenAICompatibleClient:
             ranked.append((int(item["index"]), float(score)))
         return ranked
 
+    async def chat_with_tools(
+        self,
+        model: str,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """One chat turn, optionally with tools.
+
+        Returns the raw assistant message (``content`` and/or ``tool_calls``);
+        the caller drives the tool loop (the ``agent`` node).
+        """
+        body: dict[str, object] = {"model": model, "messages": messages}
+        if tools:
+            body["tools"] = tools
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                f"{self._base_url}/chat/completions", json=body, headers=self._headers()
+            )
+        if response.status_code != httpx.codes.OK:
+            raise LlmError(f"chat completion failed: HTTP {response.status_code}")
+        try:
+            message = response.json()["choices"][0]["message"]
+        except (KeyError, IndexError, ValueError) as exc:
+            raise LlmError(f"malformed chat completion response: {exc}") from exc
+        if not isinstance(message, dict):
+            raise LlmError("chat completion returned no assistant message")
+        return message
+
 
 __all__ = ["LlmError", "OpenAICompatibleClient"]
