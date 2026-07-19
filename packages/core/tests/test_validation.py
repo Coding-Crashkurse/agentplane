@@ -178,6 +178,12 @@ def test_e011_router_numeric_condition_needs_number() -> None:
     assert ("E011", "nodes/route_1/config/rules/0/value") in _codes(defn)
 
 
+def test_e011_router_numeric_condition_needs_json_input() -> None:
+    # numeric comparison on a text input is a silent dead branch at runtime — reject it
+    defn = _text_router({"when": "gt", "value": 5, "branch": "hit"})  # input_type defaults to text
+    assert ("E011", "nodes/route_1/config/rules/0/when") in _codes(defn)
+
+
 def test_e011_router_path_requires_json_input() -> None:
     defn = _text_router({"when": "equals", "path": "category", "value": "x", "branch": "hit"})
     assert ("E011", "nodes/route_1/config/rules/0/path") in _codes(defn)

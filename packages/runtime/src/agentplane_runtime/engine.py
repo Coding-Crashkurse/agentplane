@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from operator import or_
 from typing import Annotated, Protocol, TypedDict, TypeGuard, cast
+from urllib.parse import urlsplit
 
 import httpx
 from langgraph.graph import END, START, StateGraph
@@ -538,6 +539,8 @@ class FlowRunner:
                     continue
                 if tool.name in agent_targets:
                     continue  # sub-agent tools keep their name; skip the MCP shadow
+                if tool.name in targets:
+                    continue  # another server already exposed this name; no duplicate schema
                 targets[tool.name] = _ToolTarget(url=resource.url, auth=auth, tool=tool.name)
                 schemas.append(
                     {
@@ -576,9 +579,15 @@ class FlowRunner:
             return f"error: unknown tool {name!r}"
         from fastmcp import Client  # noqa: PLC0415 - deferred: heavy import
 
-        client = Client(target.url, auth=target.auth) if target.auth else Client(target.url)
-        async with client:
-            result = await client.call_tool(target.tool, arguments)
+        # Match the sub-agent contract: a failing tool comes back as an `error:`
+        # result the model can react to, instead of aborting the whole turn (and
+        # discarding sibling tool/sub-agent calls running in the same gather).
+        try:
+            client = Client(target.url, auth=target.auth) if target.auth else Client(target.url)
+            async with client:
+                result = await client.call_tool(target.tool, arguments)
+        except Exception as exc:  # returned to the model as an error result, never raised
+            return f"error: tool {name!r} failed: {exc}"
         return _as_text(_tool_result_to_json(result))
 
     async def _call_a2a_agent(self, agent: ResolvedAgent, message: str) -> str:
@@ -610,7 +619,11 @@ class FlowRunner:
         # Propagate the active trace (SPEC §12): the sub-agent's flow span joins
         # this trace, so a multi-agent chain reads as ONE trace end to end.
         propagate.inject(headers)
-        if token := caller_token_var.get():
+        # Token passthrough only to same-gateway agents: a registry URL not under
+        # our public/gateway base must never receive the caller's JWT — a squatted
+        # or foreign entry would otherwise exfiltrate the credential.
+        base = self._context.settings.public_base_url
+        if (token := caller_token_var.get()) and (not base or _same_origin(agent.url, base)):
             headers["Authorization"] = f"Bearer {token}"
         outgoing = Message(message_id=str(uuid4()), role=Role.ROLE_USER, parts=[Part(text=message)])
         outgoing.metadata.update({CALL_DEPTH_METADATA_KEY: depth})
@@ -789,7 +802,8 @@ def _rule_matches(rule: RouterRule, value: PortValue | None) -> bool:  # noqa: P
         case "equals":
             return target == rule.value
         case "not_equals":
-            return target != rule.value
+            # A missing/null path never matches a comparison (RouterRule contract).
+            return target is not None and target != rule.value
         case "contains":
             if isinstance(target, str) and isinstance(rule.value, str):
                 return rule.value in target
@@ -810,6 +824,12 @@ def _route(config: RouterNodeConfig, value: PortValue | None) -> str:
         if _rule_matches(rule, value):
             return rule.branch
     return config.default_branch
+
+
+def _same_origin(url: str, base: str) -> bool:
+    """True when ``url`` shares scheme+host+port with ``base`` (the gateway origin)."""
+    a, b = urlsplit(url), urlsplit(base)
+    return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
 
 
 def _format_prompt(template: str, values: dict[str, str]) -> str:

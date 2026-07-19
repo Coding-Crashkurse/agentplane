@@ -449,6 +449,14 @@ def _router_rule_issues(node: RouterNode) -> list[ValidationIssue]:
                         "documents input supports only 'empty'/'not_empty' conditions",
                     )
                 )
+            if rule.when in _NUMERIC_CONDITIONS and input_type == "text":
+                issues.append(
+                    _issue(
+                        "E011",
+                        f"{path}/when",
+                        f"numeric condition {rule.when!r} requires input_type 'json' (got 'text')",
+                    )
+                )
             if rule.value is None:
                 issues.append(
                     _issue("E010", f"{path}/value", f"condition {rule.when!r} requires a value")

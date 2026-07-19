@@ -220,7 +220,9 @@ def _forward_to(app: object) -> Any:
 @respx.mock
 async def test_orchestrator_delegates_to_sub_agent_over_a2a() -> None:
     resources = await _resources()
-    settings = make_settings()
+    # Sub-agents live under the same gateway origin as this runtime's public base
+    # (that is the registry invariant); token passthrough only fires same-origin.
+    settings = make_settings(public_base_url=SUB_BASE)
     sub_manager = EndpointManager(resources, settings)
     await sub_manager.start(load_example("echo-agent.yaml"), 1)
 

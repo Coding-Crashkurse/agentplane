@@ -196,7 +196,9 @@ class FlowAgentExecutor(AgentExecutor):
         fields = context.message.metadata.fields
         if CALL_DEPTH_METADATA_KEY not in fields:
             return 0
-        return int(fields[CALL_DEPTH_METADATA_KEY].number_value)
+        # Floor at 0: the value is client-supplied metadata, and a negative seed
+        # would slide under the upper-bound recursion guard on every hop.
+        return max(0, int(fields[CALL_DEPTH_METADATA_KEY].number_value))
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id or ""
